@@ -1,0 +1,52 @@
+# Build
+builds/*
+!builds/*/.gitkeep
+/*.bin
+/*.bin.dSYM/
+/*.exe
+/*.pdb
+/*.obj
+/*.o
+/*.mem
+.idea
+version.txt
+/bunny_raylib
+/bunny_sdl_sokol
+
+# VSCode
+.vscode/settings.json
+.vscode/launch.json
+ols.json
+*.code-workspace
+
+# RemedyBG
+*.rdbg
+
+# OSX shit
+.DS_Store
+
+# Blender
+*.blend1
+
+screenshots/*
+
+assets/levels/*/backups/*
+
+dist/*
+!dist/.gitkeep
+
+/*.ctm
+imgui.ini
+
+/bin/sokol-shdc-debug
+/src/engine/engine_assets_generated.odin
+
+/src/shaders/*
+!/src/shaders/shaders.odin
+
+# RAD debugger project file
+*.raddbg
+*.raddbg_profile
+
+# Jai build
+.build
