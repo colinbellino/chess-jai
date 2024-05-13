@@ -17,8 +17,8 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
 
     args := get_build_options().compile_time_command_line;
     arg_open := array_find(args, "-open");
-    output_target := sprint("%_%_%", OS, CPU, target);
-    full_output_path := sprint("%/%", OUTPUT_PATH, output_target);
+    output_target := tprint("%_%_%", OS, CPU, target);
+    full_output_path := tprint("%/%", OUTPUT_PATH, output_target);
     log("Compiling for % | % | %.", OS, CPU, target);
 
     workspace := compiler_create_workspace("Target workspace");
@@ -39,6 +39,9 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
     set_build_options(options, workspace);
     make_directory_if_it_does_not_exist(full_output_path, recursive = true);
 
+    make_directory_if_it_does_not_exist(tprint("%/assets/fonts", full_output_path), recursive = true);
+    copy_file("assets/fonts/OpenSans-BoldItalic.ttf", tprint("%/assets/fonts/OpenSans-BoldItalic.ttf", full_output_path));
+
     compiler_begin_intercept(workspace);
     add_build_file("src/chess.jai", workspace);
     while true {
@@ -54,6 +57,6 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
     if arg_open {
         log("------------------------------");
         log("Starting game.");
-        run_command(sprint("./%/%", full_output_path, OUTPUT_EXECUTABLE_NAME));
+        run_command(tprint("./%/%", full_output_path, OUTPUT_EXECUTABLE_NAME));
     }
 };
