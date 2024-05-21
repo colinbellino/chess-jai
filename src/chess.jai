@@ -8,28 +8,35 @@ File  :: #import "File";
 #import "System";
 #import "String";
 
-TICK_PERIOD : float64 : 1.0 / 60.0;
-WANTED_MSAA :: 8;
+Color :: Vector4;
+Vector2s32 :: struct {
+    x, y: s32;
+
+    #place x;
+    component: [2] s32 = ---;
+}
 
 Piece :: struct {
     type:   u8;
     color:  u8;
 }
-Color :: Vector4;
-Vector2s :: struct {
-    x, y: s32;
-
-#place x;
-    component: [2] s32 = ---;
+Play_Mode :: enum {
+    Init;
+    Start_Turn;
+    Select_Move;
+    Perform_Move;
+    End_Turn;
+    Game_Over;
 }
 
+FEN :: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 BOARD_COLOR_WHITE :: #run(hex_to_color(0xd5ddedff));
 BOARD_COLOR_BLACK :: #run(hex_to_color(0x5a738fff));
-
+TICK_PERIOD : float64 : 1.0 / 60.0;
+WANTED_MSAA :: 8;
 window: Window_Type;
-window_size := Vector2s.{ 1920, 1080 };
+window_size := Vector2s32.{ 1920, 1080 };
 texture_pieces: Simp.Texture;
-screenshot_index := 0;
 async_read: *Simp.Pixel_Read;
 last_time: float64;
 elapsed_time: float64;
@@ -38,6 +45,8 @@ my_font: *Simp.Dynamic_Font;
 font_data := #run(load_file_or_exit("./assets/fonts/OpenSans-BoldItalic.ttf"));
 image_data := #run(load_file_or_exit("./assets/art/pieces.png"));
 zoom := 48.0;
+board_cell_size: float;
+board_offset: Vector2;
 
 #run {
     #if OS == .WINDOWS {
@@ -64,7 +73,6 @@ main :: () {
     assert(success);
 
     quit := false;
-    want_screenshot := false;
     while !quit {
         Input.update_window_events();
 
@@ -97,31 +105,12 @@ main :: () {
                     if event.key_pressed && event.key_code == .ESCAPE {
                         quit = true;
                     }
-                    if event.key_pressed && event.key_code == #char " " {
-                        want_screenshot = true;
-                    }
                 }
             }
         }
 
         frame_begin();
-
-        if want_screenshot {
-            screenshot_index += 1;
-            async_read = Simp.pixel_read_begin(null, .RGBA8);
-        }
-
-        if async_read && Simp.pixel_read_is_done(async_read) {
-            bitmap := Simp.pixel_read_end(async_read);
-            filename := tprint("screenshot_%.png\0", screenshot_index);
-            // Hardcoded to 4 channels because we know we requested .BGRA8 above.
-            stbi_write_png(filename.data, bitmap.width, bitmap.height, 4, bitmap.data.data, xx (bitmap.width * Simp.get_image_bytes_per_texel(bitmap.format)));
-            want_screenshot = false;
-            Simp.deinit(*bitmap);
-            async_read = null;
-            log("Screenshot taken: %", filename);
-        }
-
+        frame_update();
         frame_draw();
         frame_end();
     }
@@ -143,6 +132,19 @@ frame_begin :: () {
         elapsed_time += dt;
         sleep_milliseconds(2);
     }
+}
+
+frame_update :: () {
+    // TODO: port this
+    // if game_mode_entering() {
+    //     _mem.play.game = {}
+    //     _mem.play.moves = make([dynamic]Move, _mem.game_mode.arena.allocator)
+    //     board = fen_to_board(FEN);
+    //     controllers[.Black] = .CPU;
+    //     rand.init(&_mem.play.rand, _mem.play.seed);
+
+    //     play_mode_transition(.Start_Turn)
+    // }
 }
 
 frame_draw :: () {
@@ -169,8 +171,8 @@ frame_draw :: () {
         Simp.draw_prepared_text(my_font, text_x, text_y, color);
     }
 
-    board_cell_size := zoom * 2.5;
-    board_offset := Vector2.{
+    board_cell_size = zoom * 2.5;
+    board_offset = .{
         window_size.x / 2.0 - board_cell_size * 8 / 2,
         window_size.y / 2.0 - board_cell_size * 8 / 2,
     };
@@ -185,7 +187,8 @@ frame_draw :: () {
         }
     }
 
-    draw_piece(.{ board_offset.x + board_cell_size * 0, board_offset.y + board_cell_size * 0 }, .{ board_cell_size, board_cell_size }, .{ 1, 1 });
+    draw_piece(.{ 0, 0 }, .{ 1, 1 });
+    draw_piece(.{ 1, 1 }, .{ 2, 1 });
 }
 
 frame_end :: () {
@@ -221,16 +224,16 @@ draw_rect :: (position: Vector2, size: Vector2, color: Color) {
     Simp.immediate_flush();
 }
 
-draw_piece :: (position: Vector2, size: Vector2, piece: Piece) {
-    PIECE_TEXTURE_SIZE :: Vector2s.{ 7, 2 };
+draw_piece :: (position: Vector2, piece: Piece) {
+    PIECE_TEXTURE_SIZE :: Vector2s32.{ 7, 2 };
     tw := 1.0 / PIECE_TEXTURE_SIZE.x;
     th := 1.0 / PIECE_TEXTURE_SIZE.y;
     tx := cast(float) piece.type * tw;
     ty := cast(float) piece.color * th;
-    x := position.x;
-    y := position.y;
-    w := size.x;
-    h := size.y;
+    x := board_offset.x + board_cell_size * position.x;
+    y := board_offset.y + board_cell_size * position.y;
+    w := board_cell_size;
+    h := board_cell_size;
 
     Simp.set_shader_for_images(*texture_pieces);
     Simp.immediate_begin();
