@@ -2,6 +2,7 @@ Simp       :: #import "Simp";
 Input      :: #import "Input";
 File       :: #import "File";
 Hash_Table :: #import "Hash_Table";
+GetRect    :: #import "GetRect";
 #import "Math";
 #import "stb_image_write";
 #import "Window_Creation";
@@ -30,15 +31,6 @@ PIECE_TEXTURE_SIZE :: Vector2s32.{ 7, 2 };
 //     .Queen  = 'Q',
 // }
 SYMBOL_TO_PIECE: Hash_Table.Table(s64, Piece_Type);
-// SYMBOL_TO_PIECE := map[rune]Piece_Type {
-//     '.' = .None,
-//     'K' = .King,
-//     'P' = .Pawn,
-//     'N' = .Knight,
-//     'B' = .Bishop,
-//     'R' = .Rook,
-//     'Q' = .Queen,
-// }
 // DIRECTION_TO_INDEX := [Direction]int {
 //     .North      = -BOARD_SIZE,
 //     .South      = +BOARD_SIZE,
@@ -51,6 +43,8 @@ SYMBOL_TO_PIECE: Hash_Table.Table(s64, Piece_Type);
 // }
 TICK_PERIOD : float64 : 1.0 / 60.0;
 WANTED_MSAA :: 8;
+COLOR_WHITE :: Color.{ 1, 1, 1, 1 };
+COLOR_BLACK :: Color.{ 0, 0, 0, 1 };
 
 // Directions :: bit_set[Direction]
 Direction :: enum u8 {
@@ -156,6 +150,7 @@ Vector2s32 :: struct {
 window: Window_Type;
 window_size := Vector2s32.{ 1920, 1080 };
 last_time: float64;
+now: float64;
 elapsed_time: float64;
 dt: float;
 // Renderer
@@ -164,6 +159,7 @@ my_font: *Simp.Dynamic_Font;
 font_data := #run(load_file_or_exit("./assets/fonts/OpenSans-BoldItalic.ttf"));
 image_data := #run(load_file_or_exit("./assets/art/pieces.png"));
 zoom := 48.0;
+button_theme: GetRect.Button_Theme;
 // Play_State
 mode: Play_Mode;
 // turn_arena: tools.Named_Virtual_Arena,
@@ -174,6 +170,7 @@ controllers: [#run(count_of(Piece_Color))]Controller;
 board_cell_size: float;
 board_offset: Vector2;
 game: Game;
+any_input_was_used: bool;
 
 // #run {
 //     #if OS == .WINDOWS {
@@ -201,7 +198,9 @@ main :: () {
     msaa := Simp.prepare_window(window, wanted_msaa = WANTED_MSAA);
     window_size.x, window_size.y = Simp.get_render_dimensions(window);
 
-    Simp.set_render_target(window, .LEFT_HANDED);
+    Simp.set_render_target(window, .RIGHT_HANDED);
+
+    GetRect.ui_init();
 
     init_fonts();
     success := Simp.texture_load_from_memory(*texture_pieces, xx image_data);
@@ -210,6 +209,7 @@ main :: () {
     quit := false;
     while !quit {
         Input.update_window_events();
+        any_input_was_used = false;
 
         for record : Input.get_window_resizes() {
             Simp.update_window(record.window);
@@ -232,11 +232,17 @@ main :: () {
         }
 
         for event : Input.events_this_frame {
+            GetRect.getrect_handle_event(event);
+
             if event.type == {
                 case .QUIT; {
                     quit = true;
                 }
                 case .KEYBOARD; {
+                    if event.key_pressed == 0 {
+                        any_input_was_used = true;
+                    }
+
                     if event.key_pressed && event.key_code == .ESCAPE {
                         quit = true;
                     }
@@ -249,7 +255,6 @@ main :: () {
 
         frame_begin();
             frame_update();
-            frame_draw();
         frame_end();
     }
 }
@@ -261,7 +266,7 @@ frame_begin :: () {
             break;
         }
 
-        now := seconds_since_init();
+        now = seconds_since_init();
         if last_time{
             dt = cast(float) (now - last_time);
         }
@@ -269,6 +274,21 @@ frame_begin :: () {
 
         elapsed_time += dt;
         sleep_milliseconds(2);
+    }
+
+    Simp.clear_render_target(BOARD_COLOR_BLACK.x - 0.25, BOARD_COLOR_BLACK.y - 0.25, BOARD_COLOR_BLACK.z - 0.25, BOARD_COLOR_BLACK.w);
+
+    {
+        GetRect.ui_per_frame_update(window, window_size.x, window_size.y, now);
+
+        proc := GetRect.default_theme_procs[GetRect.Default_Themes.Freddie_Freeloader];
+        my_theme := proc();
+        my_theme.font = my_font;
+        GetRect.set_default_theme(my_theme);
+
+        button_theme = my_theme.button_theme;
+        button_theme.font = my_font;
+        button_theme.enable_variable_frame_thickness = true;
     }
 }
 
@@ -287,11 +307,57 @@ frame_update :: () {
             //     play_mode_transition(.Start_Turn)
             mode = .Start_Turn;
         }
-    }
-}
+        case .Start_Turn; {
+            game.hide_move_piece = false;
 
-frame_draw :: () {
-    Simp.clear_render_target(BOARD_COLOR_BLACK.x - 0.25, BOARD_COLOR_BLACK.y - 0.25, BOARD_COLOR_BLACK.z - 0.25, BOARD_COLOR_BLACK.w);
+            {
+                // free_all(_mem.play.turn_arena.allocator)
+                // _mem.play.valid_moves = generate_valid_moves(&_mem.play.board, _mem.play.turn_arena.allocator)
+                // #reverse for &move, i in _mem.play.valid_moves {
+                //     if move_leads_to_check(move) {
+                //         ordered_remove(&_mem.play.valid_moves, i)
+                //     }
+                // }
+            }
+
+            if game.valid_moves.count == 0 {
+                if game.board.check[game.board.active_color] {
+                    game.victor = ifx(game.board.active_color == .White) then .Black else .White;
+                } else {
+                    game.victor = .Draw; // Stalemate
+                }
+                mode = .Game_Over;
+            } else {
+                if game.board.halfmoves_without_capture >= MAX_HALFMOVES_WITHOUT_CAPTURE {
+                    game.victor = .Draw; // 50-Move Rule
+                    mode = .Game_Over;
+                } else {
+                    mode = .Select_Move;
+                }
+            }
+        }
+        case .Game_Over; {
+            box_height :: 280.0;
+            text_width :: 10.0;
+            // ui_rect(window_to_ui_position({ 1, (window_size.y / 2) - (box_height / 2) }), window_to_ui_position({ window_size.x - 2, box_height }), { 0, 0, 0, 0.8 }, layer = 1);
+            ui_text(.{ 0, cast(float) (window_size.y / 2) - 60 }, "Checkmate", size = 8, layer = 1);
+            // ui_text(.{ (window_size.x / 2) - (text_width / 2) + 3, cast(float) (window_size.y / 2) - 60 }, "Checkmate", size = 8, layer = 1);
+            victor_text: string;
+            if game.victor == {
+                case .White; { victor_text = "- Victory: white -"; }
+                case .Black; { victor_text = "- Victory: black -"; }
+                case .Draw;  { victor_text = "-      Draw      -"; }
+            }
+            ui_text(.{ 0, cast(float) (window_size.y / 2) + 30 }, victor_text, size = 4, layer = 1);
+            // ui_text(.{ (window_size.x / 2) - (text_width / 2), cast(float) (window_size.y / 2) + 30 }, victor_text, size = 4, layer = 1);
+
+            if any_input_was_used {
+                // _mem.debug_force_transition = .Title;
+                // FIXME: restart game
+                log("restart");
+            }
+        }
+    }
 
     Simp.set_shader_for_color();
 
@@ -306,10 +372,10 @@ frame_draw :: () {
         color.z = clamp(sin(theta) * -0.5 + 0.5, 0, 1);
         color.w = 1;
 
-        text := tprint("zoom: %", zoom);
+        text := tprint("zoom: % | mode: %", zoom, mode);
         text_width := Simp.prepare_text(my_font, text);
         text_x := (window_size.x - text_width) / 2;
-        text_y := 50 + my_font.character_height / 4;
+        text_y := window_size.y - 75 + my_font.character_height / 4;
 
         Simp.draw_prepared_text(my_font, text_x, text_y, color);
     }
@@ -328,10 +394,6 @@ frame_draw :: () {
         board_position := grid_index_to_position(board_index, BOARD_SIZE_V2);
         draw_piece(board_position, piece);
     }
-
-    // draw_piece(.{ 0, 0 }, .{ .Black, .King });
-    // draw_piece(.{ 1, 1 }, .{ .Black, .Pawn });
-    // draw_piece(.{ 7, 7 }, .{ .White, .Knight });
 }
 
 frame_end :: () {
@@ -388,7 +450,7 @@ count_of :: ($E: Type) -> int {
     return type_info(E).values.count;
 }
 
-// FIXME:
+// Source: https://www.chess.com/terms/fen-chess#castling-rights
 fen_to_board :: (input: string) -> Board {
     input_parts := split(input, " ",, allocator = temp);
     assert(input_parts.count > 0, "Invalid input.");
@@ -516,4 +578,11 @@ board_position_to_index :: (board: *Board, board_position: Vector2s32) -> (int, 
     }
     index := grid_position_to_index(board_position, BOARD_SIZE);
     return index, *board.pieces[index], true;
+}
+
+ui_text :: (position: Vector2, text: string, color := COLOR_WHITE, size: u8, layer := 0, loc := #caller_location) {
+    // FIXME: use layer so we don't draw below the board
+    k := window_size.y * 0.1;
+    rect := GetRect.get_rect(position.x, position.y, 4*k, k);
+    pressed := GetRect.button(rect, text, *button_theme, loc = loc);
 }
