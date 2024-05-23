@@ -17,19 +17,19 @@ BOARD_SIZE :: 8;
 BOARD_SIZE_V2 :: Vector2s32.{ BOARD_SIZE, BOARD_SIZE };
 BOARD_COLOR_WHITE :: #run(hex_to_color(0xd5ddedff));
 BOARD_COLOR_BLACK :: #run(hex_to_color(0x5a738fff));
-PIECE_TEXTURE_SIZE :: Vector2s32.{ 7, 2 };
+PIECE_TEXTURE_SIZE :: Vector2.{ 7, 2 };
 // BOARD_CELL_SIZE     :: 8;
 // PIECE_TEXTURE_SIZE  :: Vector2s32.{ 213, 213 };
 // PIECE_SIZE          :: Vector2.{ 8, 8 };
-// PIECE_TO_SYMBOL := [Piece_Type]rune {
-//     .None   = '.',
-//     .King   = 'K',
-//     .Pawn   = 'P',
-//     .Knight = 'N',
-//     .Bishop = 'B',
-//     .Rook   = 'R',
-//     .Queen  = 'Q',
-// }
+PIECE_TO_SYMBOL :: u8.[
+    /* .None */   #char ".",
+    /* .King */   #char "K",
+    /* .Pawn */   #char "P",
+    /* .Knight */ #char "N",
+    /* .Bishop */ #char "B",
+    /* .Rook */   #char "R",
+    /* .Queen */  #char "Q",
+];
 SYMBOL_TO_PIECE: Hash_Table.Table(s64, Piece_Type);
 // DIRECTION_TO_INDEX := [Direction]int {
 //     .North      = -BOARD_SIZE,
@@ -45,6 +45,8 @@ TICK_PERIOD : float64 : 1.0 / 60.0;
 WANTED_MSAA :: 8;
 COLOR_WHITE :: Color.{ 1, 1, 1, 1 };
 COLOR_BLACK :: Color.{ 0, 0, 0, 1 };
+#placeholder ANIMATION_ENABLE;
+#placeholder DEBUG;
 
 // Directions :: bit_set[Direction]
 Direction :: enum u8 {
@@ -99,16 +101,16 @@ Move :: struct {
     start_piece:    Piece;
     target:         int;
     target_piece:   Piece;
-    // flags:          Move_Flags;
+    flags:          Move_Flag;
 }
 // Move_Flags :: bit_set[Move_Flag]
-// Move_Flag :: enum {
-//     None,
-//     En_Passant,
-//     Push2,
-//     Castle,
-//     Check,
-// }
+Move_Flag :: enum u8 {
+    None        :: 0;
+    En_Passant  :: 1 << 0;
+    Push2       :: 1 << 1;
+    Castle      :: 1 << 2;
+    Check       :: 1 << 3;
+}
 
 Victor :: enum {
     White;
@@ -145,6 +147,9 @@ Vector2s32 :: struct {
     #place x;
     component: [2] s32 = ---;
 }
+operator + :: (a: Vector2s32, b: Vector2s32) -> Vector2s32 {
+    return .{ a.x + b.x, a.y + b.y };
+}
 
 // Window
 window: Window_Type;
@@ -171,6 +176,9 @@ board_cell_size: float;
 board_offset: Vector2;
 game: Game;
 any_input_was_used: bool;
+mouse_window_position: Vector2;
+mouse_world_position: Vector2;
+mouse_board_position: Vector2s32;
 
 // #run {
 //     #if OS == .WINDOWS {
@@ -198,7 +206,7 @@ main :: () {
     msaa := Simp.prepare_window(window, wanted_msaa = WANTED_MSAA);
     window_size.x, window_size.y = Simp.get_render_dimensions(window);
 
-    Simp.set_render_target(window, .RIGHT_HANDED);
+    Simp.set_render_target(window, .LEFT_HANDED);
 
     GetRect.ui_init();
 
@@ -293,16 +301,34 @@ frame_begin :: () {
 }
 
 frame_update :: () {
+    window_to_world_position :: (window_position: Vector2) -> Vector2 {
+        return .{
+            window_position.x - board_offset.x,
+            window_position.y - board_offset.y,
+        };
+    }
+    world_to_board_position :: (world_position: Vector2) -> Vector2s32 {
+        return .{
+            cast(s32) floor(world_position.x / cast(float) board_cell_size),
+            cast(s32) floor(world_position.y / cast(float) board_cell_size),
+        };
+    }
+
+    mouse_window_position = get_mouse_window_position();
+    mouse_world_position = window_to_world_position(mouse_window_position);
+    mouse_board_position = world_to_board_position(mouse_world_position);
+    mouse_board_index, mouse_piece, mouse_in_bounds := board_position_to_index(*game.board, mouse_board_position);
+
     board_cell_size = zoom * 2.5;
     board_offset = .{
         window_size.x / 2.0 - board_cell_size * 8 / 2,
         window_size.y / 2.0 - board_cell_size * 8 / 2,
     };
 
-    if mode == {
+    if #complete mode == {
         case .Init; {
             game.board = fen_to_board(FEN);
-            controllers[Piece_Color.Black] = .CPU;
+            // controllers[Piece_Color.Black] = .CPU; // FIXME:
             //     rand.init(&_mem.rand, _mem.seed);
             //     play_mode_transition(.Start_Turn)
             mode = .Start_Turn;
@@ -312,7 +338,7 @@ frame_update :: () {
 
             {
                 // free_all(_mem.play.turn_arena.allocator)
-                // _mem.play.valid_moves = generate_valid_moves(&_mem.play.board, _mem.play.turn_arena.allocator)
+                game.valid_moves = generate_valid_moves(*game.board/* ,, allocator = turn_allocator */); // FIXME: allocator
                 // #reverse for &move, i in _mem.play.valid_moves {
                 //     if move_leads_to_check(move) {
                 //         ordered_remove(&_mem.play.valid_moves, i)
@@ -336,20 +362,109 @@ frame_update :: () {
                 }
             }
         }
+        case .Select_Move; {
+            #if DEBUG {
+                if mouse_button_is_released(.SPACEBAR) {
+                    game.board.active_color = ifx(game.board.active_color == .White) then .Black else .White;
+                    mode = .Start_Turn;
+                }
+            }
+
+            move: *Move;
+            if controllers[game.board.active_color] == .CPU {
+                // move = cpu_best_move(board, _mem.play.valid_moves);
+            } else {
+                if mouse_button_is_pressed(.MOUSE_BUTTON_LEFT) {
+                    piece_start := board_index_to_piece(*game.board, mouse_board_index);
+                    if piece_start != null && piece_start.type != .None && piece_start.color == game.board.active_color {
+                        game.drag_in_progress = true;
+                        game.drag_start = mouse_board_index;
+                        log("drag_start: %", mouse_board_index);
+                    }
+                }
+                if mouse_button_is_released(.MOUSE_BUTTON_LEFT) {
+                    game.drag_in_progress = false;
+                    game.drag_end = mouse_board_index;
+
+                    for valid_move : game.valid_moves {
+                        if valid_move.start == game.drag_start && valid_move.target == game.drag_end {
+                            move = *valid_move;
+                            break;
+                        }
+                    }
+                    game.drag_start = -1;
+                    game.drag_end = -1;
+                    log("drag_end: % -> %", mouse_board_position, move.*);
+
+                    if move == null {
+                        // TODO: play error sound or something
+                    }
+                }
+            }
+
+            if move != null {
+                log("move: %", move.*);
+                array_add(*game.moves, move.*);
+                game.hide_move_piece = true;
+
+                if controllers[game.board.active_color] == .CPU && ANIMATION_ENABLE {
+                    mode = .Perform_Move;
+                } else {
+                    mode = .End_Turn;
+                }
+            }
+        }
+        case .Perform_Move; {
+
+        }
+        case .End_Turn; {
+            move := game.moves[game.moves.count - 1];
+
+            // Castling
+            if move.start_piece.type == .Rook {
+                if move.start == 0 { game.board.castling_right_queen[Piece_Color.Black] = false; }
+                if move.start == 7 { game.board.castling_right_king[Piece_Color.Black] = false; }
+                if move.start == 56 { game.board.castling_right_queen[Piece_Color.White] = false; }
+                if move.start == 63 { game.board.castling_right_king[Piece_Color.White] = false; }
+            } else if move.start_piece.type == .King {
+                if move.start_piece.color == .White {
+                    game.board.castling_right_queen[Piece_Color.White] = false;
+                    game.board.castling_right_king[Piece_Color.White] = false;
+                } else {
+                    game.board.castling_right_queen[Piece_Color.Black] = false;
+                    game.board.castling_right_king[Piece_Color.Black] = false;
+                }
+            }
+
+            captured_a_piece := board_make_move(*game.board, move);
+            if captured_a_piece {
+                game.board.halfmoves_without_capture = 0;
+                // e.audio_play_sound(_mem.asset_sound_take_piece);
+            } else {
+                game.board.halfmoves_without_capture += 1;
+                // e.audio_play_sound(_mem.asset_sound_place_piece);
+            }
+
+            if game.board.active_color == .Black {
+                game.board.fullmove_count += 1;
+            }
+            game.board.active_color = ifx(game.board.active_color == .White) then .Black else .White;
+            mode = .Start_Turn;
+        }
         case .Game_Over; {
             box_height :: 280.0;
             text_width :: 10.0;
             // ui_rect(window_to_ui_position({ 1, (window_size.y / 2) - (box_height / 2) }), window_to_ui_position({ window_size.x - 2, box_height }), { 0, 0, 0, 0.8 }, layer = 1);
-            ui_text(.{ 0, cast(float) (window_size.y / 2) - 60 }, "Checkmate", size = 8, layer = 1);
-            // ui_text(.{ (window_size.x / 2) - (text_width / 2) + 3, cast(float) (window_size.y / 2) - 60 }, "Checkmate", size = 8, layer = 1);
+            draw_button(.{ 0, cast(float) (window_size.y / 2) - 60 }, "Checkmate", size = 8, layer = 1);
+            // draw_button(.{ (window_size.x / 2) - (text_width / 2) + 3, cast(float) (window_size.y / 2) - 60 }, "Checkmate", size = 8, layer = 1);
             victor_text: string;
             if game.victor == {
                 case .White; { victor_text = "- Victory: white -"; }
                 case .Black; { victor_text = "- Victory: black -"; }
                 case .Draw;  { victor_text = "-      Draw      -"; }
             }
-            ui_text(.{ 0, cast(float) (window_size.y / 2) + 30 }, victor_text, size = 4, layer = 1);
-            // ui_text(.{ (window_size.x / 2) - (text_width / 2), cast(float) (window_size.y / 2) + 30 }, victor_text, size = 4, layer = 1);
+            draw_button(.{ 0, cast(float) (window_size.y / 2) + 30 }, victor_text, size = 4, layer = 1);
+            // draw_button(.{ (window_size.x / 2) - (text_width / 2), cast(float) (window_size.y / 2) + 30 }, victor_text, size = 4, layer = 1);
 
             if any_input_was_used {
                 // _mem.debug_force_transition = .Title;
@@ -365,20 +480,18 @@ frame_update :: () {
 
     {
         theta := cast(float) fmod_cycling(time * 3, TAU);
-
         color: Vector4 = ---;
         color.x = clamp(cos(theta) * 0.5 + 0.5, 0, 1);
         color.y = 1;
         color.z = clamp(sin(theta) * -0.5 + 0.5, 0, 1);
         color.w = 1;
 
-        text := tprint("zoom: % | mode: %", zoom, mode);
-        text_width := Simp.prepare_text(my_font, text);
-        text_x := (window_size.x - text_width) / 2;
-        text_y := window_size.y - 75 + my_font.character_height / 4;
-
-        Simp.draw_prepared_text(my_font, text_x, text_y, color);
+        draw_text(.{ 50, cast(float) window_size.y - 75 }, tprint("zoom: % | mode: %", zoom, mode), color);
     }
+    // draw_text(.{ 50, 10 }, tprint("mouse_window_position: % | mouse_world_position: % | mouse_board_position: %", mouse_window_position, mouse_world_position, mouse_board_position));
+    draw_text(.{ 10, 30 }, tprint("active_color: %", game.board.active_color));
+    draw_text(.{ 10, 50 }, tprint("mouse_board_position: %", mouse_board_position));
+    draw_text(.{ 10, 80 }, tprint("controllers: %", controllers));
 
     for y : 0 .. BOARD_SIZE-1 {
         for x : 0 .. BOARD_SIZE-1 {
@@ -386,7 +499,11 @@ frame_update :: () {
             if (y + x) % 2 == 1 {
                 color = BOARD_COLOR_BLACK;
             }
-            draw_rect(.{ board_offset.x + (x * board_cell_size), board_offset.y + (y * board_cell_size) }, .{ board_cell_size, board_cell_size }, color);
+            draw_rect(.{ board_offset.x + (x * board_cell_size), window_size.y - board_offset.y + (BOARD_SIZE - y * board_cell_size) }, .{ board_cell_size, -board_cell_size }, color);
+            #if DEBUG {
+                draw_text(.{ board_offset.x + (x * board_cell_size) + 10, window_size.y - board_offset.y + (BOARD_SIZE - y * board_cell_size) - board_cell_size * 0.8 }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 });
+                draw_text(.{ board_offset.x + (x * board_cell_size) + board_cell_size * 0.7, window_size.y - board_offset.y + (BOARD_SIZE - y * board_cell_size) - board_cell_size * 0.8 }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.5 });
+            }
         }
     }
 
@@ -402,7 +519,7 @@ frame_end :: () {
 }
 
 init_fonts :: () {
-    pixel_height := window_size.y / 24;
+    pixel_height := 20;
     my_font = Simp.get_font_at_size(xx font_data, pixel_height);
     assert(my_font != null);
 }
@@ -444,6 +561,16 @@ draw_piece :: (position: Vector2s32, piece: Piece) {
     Simp.immediate_begin();
     Simp.immediate_quad(.{ x + 0, y + 0 }, .{ x + w, y + 0 }, .{ x + w, y + h }, .{ x + 0, y + h }, .{ 1, 1, 1, 1 }, .{ tx + 0, ty + 0 }, .{ tx + tw, ty + 0 }, .{ tx + tw, ty + th }, .{ tx + 0, ty + th });
     Simp.immediate_flush();
+}
+draw_text :: (position: Vector2, text: string, color: Color = .{ 1, 1, 1, 1 }) {
+    text_width := Simp.prepare_text(my_font, text);
+    Simp.draw_prepared_text(my_font, xx position.x, xx position.y, color);
+}
+draw_button :: (position: Vector2, text: string, color := COLOR_WHITE, size: u8, layer := 0, loc := #caller_location) {
+    // FIXME: use layer so we don't draw below the board
+    k := window_size.y * 0.1;
+    rect := GetRect.get_rect(position.x, position.y, 4*k, k);
+    pressed := GetRect.button(rect, text, *button_theme, loc = loc);
 }
 
 count_of :: ($E: Type) -> int {
@@ -555,6 +682,9 @@ grid_index_to_position :: (grid_index: int, grid_size: Vector2s32) -> Vector2s32
 grid_position_is_in_bounds :: (grid_position: Vector2s32, grid_size: Vector2s32) -> bool {
     return grid_position.x >= 0 && grid_position.x < grid_size.x && grid_position.y >= 0 && grid_position.y < grid_size.y;
 }
+grid_index_is_in_bounds :: (grid_index: int, grid_size: Vector2s32) -> bool {
+    return grid_index >= 0 && grid_index < cast(int) (grid_size.x * grid_size.y);
+}
 grid_position_to_index :: (grid_position: Vector2s32, grid_width: s32) -> int {
     return cast(int) (grid_position.y * grid_width) + grid_position.x;
 }
@@ -579,10 +709,324 @@ board_position_to_index :: (board: *Board, board_position: Vector2s32) -> (int, 
     index := grid_position_to_index(board_position, BOARD_SIZE);
     return index, *board.pieces[index], true;
 }
+board_index_to_piece :: (board: *Board, board_index: int) -> *Piece {
+    if grid_index_is_in_bounds(board_index, BOARD_SIZE_V2) == false {
+        return null;
+    }
+    return *board.pieces[board_index];
+}
 
-ui_text :: (position: Vector2, text: string, color := COLOR_WHITE, size: u8, layer := 0, loc := #caller_location) {
-    // FIXME: use layer so we don't draw below the board
-    k := window_size.y * 0.1;
-    rect := GetRect.get_rect(position.x, position.y, 4*k, k);
-    pressed := GetRect.button(rect, text, *button_theme, loc = loc);
+generate_valid_moves :: (board: *Board) -> [..]Move {
+    color_direction_y := cast(s32) (ifx board.active_color == .Black then 1 else -1);
+
+    valid_moves: [..]Move;
+    for piece, board_index : board.pieces {
+        start_position := grid_index_to_position(board_index, BOARD_SIZE_V2);
+
+        if piece.color != board.active_color {
+            continue;
+        }
+
+        if piece.type == {
+            // case .King, .Bishop, .Rook, .Queen: {
+            //     directions := board.squares_to_edges[board_index]
+            //     for value, direction in directions {
+            //         move_range := value
+            //         if piece.type == .Rook && direction in (Directions { .North_East, .North_West, .South_East, .South_West }) {
+            //             continue
+            //         } else if piece.type == .Bishop && direction in (Directions { .North, .South, .West, .East }) {
+            //             continue
+            //         } else if piece.type == .King {
+            //             move_range = min(value, 1)
+            //         }
+
+            //         for i in 1 ..= move_range {
+            //             target_index := board_index + DIRECTION_TO_INDEX[direction] * int(i)
+            //             target_piece := &board.pieces[target_index]
+
+            //             if target_piece.type != .None && target_piece.color == board.active_color {
+            //                 break
+            //             }
+
+            //             move := Move {
+            //                 start        = board_index,
+            //                 start_piece  = piece,
+            //                 target       = target_index,
+            //                 target_piece = target_piece^,
+            //                 flags        = { target_piece.type == .King ? .Check : .None }
+            //             }
+            //             append(&valid_moves, move)
+
+            //             if target_piece.type != .None && target_piece.color != board.active_color {
+            //                 break
+            //             }
+            //         }
+            //     }
+
+            //     // TODO: Castling
+            //     // - Your king can not pass through check
+            //     if piece.type == .King {
+            //         CASTLE_RANGE :: 2
+            //         if board.check[piece.color] == false {
+            //             king_side: {
+            //                 can_castle := board.castling_right_king[piece.color]
+            //                 for x in 1 ..= CASTLE_RANGE {
+            //                     target_index, target_piece, target_found := board_position_to_index(board, start_position + { i32(x), 0 })
+            //                     if target_found == false || target_piece.type != .None {
+            //                         can_castle = false
+            //                         break
+            //                     }
+            //                 }
+
+            //                 if can_castle {
+            //                     target_index, target_piece, target_found := board_position_to_index(board, start_position + { CASTLE_RANGE, 0 })
+            //                     move := Move {
+            //                         start        = board_index,
+            //                         start_piece  = piece,
+            //                         target       = target_index,
+            //                         target_piece = target_piece^,
+            //                         flags        = { .Castle, target_piece.type == .King ? .Check : .None }
+            //                     }
+            //                     append(&valid_moves, move)
+            //                 }
+            //             }
+            //             queen_side: {
+            //                 can_castle := board.castling_right_queen[piece.color]
+            //                 for x in 1 ..= (CASTLE_RANGE + 1) {
+            //                     target_index, target_piece, target_found := board_position_to_index(board, start_position - { i32(x), 0 })
+            //                     if target_found == false || target_piece.type != .None {
+            //                         can_castle = false
+            //                         break
+            //                     }
+            //                 }
+
+            //                 if can_castle {
+            //                     target_index, target_piece, target_found := board_position_to_index(board, start_position - { CASTLE_RANGE, 0 })
+            //                     move := Move {
+            //                         start        = board_index,
+            //                         start_piece  = piece,
+            //                         target       = target_index,
+            //                         target_piece = target_piece^,
+            //                         flags        = { .Castle, target_piece.type == .King ? .Check : .None }
+            //                     }
+            //                     append(&valid_moves, move)
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
+            // case .Knight: {
+            //     knight_moves := [?]Vector2s32 {
+            //         { +2, +1 }, { +2, -1 },
+            //         { -2, +1 }, { -2, -1 },
+            //         { +1, +2 }, { -1, +2 },
+            //         { +1, -2 }, { -1, -2 },
+            //     }
+
+            //     for move in knight_moves {
+            //         target_index, target_piece, target_found := board_position_to_index(board, start_position + move)
+            //         if target_found == false {
+            //             continue
+            //         }
+            //         if target_piece.type != .None && target_piece.color == board.active_color {
+            //             continue
+            //         }
+
+            //         move := Move {
+            //             start        = board_index,
+            //             start_piece  = piece,
+            //             target       = target_index,
+            //             target_piece = target_piece^,
+            //             flags        = { target_piece.type == .King ? .Check : .None }
+            //         }
+            //         append(&valid_moves, move)
+            //     }
+            // }
+            case .Pawn; {
+                for push1: 1..1 {
+                    target_index, target_piece, target_found := board_position_to_index(board, start_position + Vector2s32.{ 0, color_direction_y });
+                    if target_found == false {
+                        break push1;
+                    }
+                    if target_piece.type != .None {
+                        break push1;
+                    }
+
+                    move := Move.{
+                        start        = board_index,
+                        start_piece  = piece,
+                        target       = target_index,
+                        target_piece = target_piece.*,
+                        flags        = ifx (target_piece.type == .King) then .Check else .None,
+                    };
+                    array_add(*valid_moves, move);
+                }
+
+                for push2: 1..1 {
+                    PAWN_START_Y :: 1;
+                    is_rank_valid := start_position.y == (BOARD_SIZE - 1 - PAWN_START_Y) || start_position.y == PAWN_START_Y;
+                    if is_rank_valid == false {
+                        break push2;
+                    }
+
+                    { // Prevent jumping over pieces
+                        target_index, target_piece, target_found := board_position_to_index(board, start_position + .{ 0, 1 * color_direction_y });
+                        if target_piece.type != .None {
+                            break push2;
+                        }
+                    }
+
+                    target_index, target_piece, target_found := board_position_to_index(board, start_position + .{ 0, 2 * color_direction_y });
+                    if target_found == false {
+                        break push2;
+                    }
+                    if target_piece.type != .None {
+                        break push2;
+                    }
+
+                    move := Move.{
+                        start        = board_index,
+                        start_piece  = piece,
+                        target       = target_index,
+                        target_piece = target_piece.*,
+                        flags        = ifx(target_piece.type == .King) then .Check | .Push2 else .Push2
+                    };
+                    array_add(*valid_moves, move);
+                }
+
+                // capture: {
+                //     pawn_capture_moves := [?]Vector2s32 {
+                //         { +1, color_direction_y },
+                //         { -1, color_direction_y },
+                //     }
+                //     for move in pawn_capture_moves {
+                //         target_index, target_piece, target_found := board_position_to_index(board, start_position + move)
+                //         if target_found == false {
+                //             continue
+                //         }
+                //         if target_piece.type == .None || target_piece.color == board.active_color {
+                //             continue
+                //         }
+
+                //         move := Move {
+                //             start        = board_index,
+                //             start_piece  = piece,
+                //             target       = target_index,
+                //             target_piece = target_piece^,
+                //             flags        = { target_piece.type == .King ? .Check : .None }
+                //         }
+                //         append(&valid_moves, move)
+                //     }
+                // }
+
+                // en_passant: {
+                //     pawn_en_passant_moves := [?]Vector2s32 {
+                //         { +1, color_direction_y },
+                //         { -1, color_direction_y },
+                //     }
+                //     for move in pawn_en_passant_moves {
+                //         target_index, target_piece, target_found := board_position_to_index(board, start_position + move)
+                //         if target_found == false {
+                //             continue
+                //         }
+                //         if board.en_passant != target_index {
+                //             continue
+                //         }
+
+                //         move := Move {
+                //             start        = board_index,
+                //             start_piece  = piece,
+                //             target       = target_index,
+                //             target_piece = target_piece^,
+                //             flags        = { .En_Passant, target_piece.type == .King ? .Check : .None }
+                //         }
+                //         append(&valid_moves, move)
+                //     }
+                // }
+            }
+            case .None; {}
+        }
+    }
+
+    return valid_moves;
+}
+
+mouse_button_is_pressed :: (button: Input.Key_Code) -> bool {
+    return Input.input_button_states[button] == .DOWN | .START;
+}
+mouse_button_is_released :: (button: Input.Key_Code) -> bool {
+    return Input.input_button_states[button] == .DOWN | .END;
+}
+
+get_mouse_window_position :: () -> Vector2 {
+    x, y := get_mouse_pointer_position();
+    Clamp(*x, 0, window_size.x);
+    Clamp(*y, 0, window_size.y);
+
+    return .{ xx x, xx y };
+}
+
+board_make_move :: (board: *Board, move: Move) -> (captured_a_piece: bool) {
+    captured_a_piece := false;
+    piece_start := board_index_to_piece(board, move.start);
+    piece_target := board_index_to_piece(board, move.target);
+
+    // {
+    //     captured_a_piece = piece_target.type != .None
+    //     en_passant_direction : Direction = board.active_color == .White ? .South : .North
+    //     board.en_passant = -1
+
+    //     if .En_Passant in move.flags {
+    //         captured_piece := board_index_to_piece(board, move.target + DIRECTION_TO_INDEX[en_passant_direction])
+    //         captured_piece^ = {}
+    //         captured_a_piece = true
+    //     }
+    //     if .Push2 in move.flags {
+    //         board.en_passant = move.target + DIRECTION_TO_INDEX[en_passant_direction]
+    //     }
+    // }
+
+    // if .Castle in move.flags {
+    //     start_position := e.grid_index_to_position(move.start, BOARD_SIZE)
+    //     target_position := e.grid_index_to_position(move.target, BOARD_SIZE)
+    //     king_direction : Direction = (target_position.x - start_position.x > 0) ? .East : .West
+
+    //     rook_start_offset := (king_direction == .East) ? +1 : -2
+    //     rook_start_piece := board_index_to_piece(board, move.target + rook_start_offset)
+    //     rook_target_offset := (king_direction == .East) ? -1 : +1
+    //     rook_target_piece := board_index_to_piece(board, move.target + rook_target_offset)
+    //     rook_target_piece^ = rook_start_piece^
+    //     rook_start_piece^ = {}
+    // }
+
+    piece_target.* = piece_start.*;
+    piece_start.* = .{};
+
+    target_position := grid_index_to_position(move.target, BOARD_SIZE_V2);
+    promotion_rank_y := ifx(board.active_color == .White) then 0 else (BOARD_SIZE - 1);
+    if piece_target.type == .Pawn && target_position.y == promotion_rank_y {
+        piece_target.type = .Queen;
+    }
+
+    log("print_board: \n%", print_board(board,, allocator = temp));
+
+    return captured_a_piece;
+}
+
+print_board :: (board: *Board) -> string {
+    builder: String_Builder;
+    for piece, i : board.pieces {
+        board_position := grid_index_to_position(i, BOARD_SIZE_V2);
+        symbol := PIECE_TO_SYMBOL[piece.type];
+        if piece.color == .Black {
+            symbol = to_lower(symbol);
+        }
+        if i > 0 && board_position.x % BOARD_SIZE == 0 {
+            append(*builder, "\n");
+        }
+        append(*builder, " ");
+        append(*builder, symbol);
+        append(*builder, " ");
+    }
+    return builder_to_string(*builder);
 }

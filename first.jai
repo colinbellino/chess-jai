@@ -39,15 +39,25 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
     set_build_options(options, workspace);
     make_directory_if_it_does_not_exist(full_output_path, recursive = true);
 
-    make_directory_if_it_does_not_exist(tprint("%/assets/fonts", full_output_path), recursive = true);
-    copy_file("assets/fonts/OpenSans-BoldItalic.ttf", tprint("%/assets/fonts/OpenSans-BoldItalic.ttf", full_output_path));
+    // make_directory_if_it_does_not_exist(tprint("%/assets/fonts", full_output_path), recursive = true);
+    // copy_file("assets/fonts/OpenSans-BoldItalic.ttf", tprint("%/assets/fonts/OpenSans-BoldItalic.ttf", full_output_path));
 
     compiler_begin_intercept(workspace);
     add_build_file("src/chess.jai", workspace);
+    generated_code := false;
     while true {
         message := compiler_wait_for_message();
         if message.kind == {
-            // case .PHASE;    { }
+            case .PHASE;    {
+                phase := cast(*Message_Phase) message;
+                if phase.phase == .TYPECHECKED_ALL_WE_CAN {
+                    if !generated_code {
+                        add_build_string(tprint("DEBUG :: %;", arg_release == false), workspace);
+                        add_build_string("ANIMATION_ENABLE :: false;", workspace);
+                        generated_code = true;
+                    }
+                }
+            }
             case .ERROR;    { exit(1); }
             case .COMPLETE; { break; }
         }
