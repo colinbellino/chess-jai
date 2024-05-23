@@ -499,10 +499,10 @@ frame_update :: () {
             if (y + x) % 2 == 1 {
                 color = BOARD_COLOR_BLACK;
             }
-            draw_rect(.{ board_offset.x + (x * board_cell_size), window_size.y - board_offset.y + (BOARD_SIZE - y * board_cell_size) }, .{ board_cell_size, -board_cell_size }, color);
+            draw_rect(.{ board_offset.x + (x * board_cell_size), board_offset.y + (y * board_cell_size) }, .{ board_cell_size, board_cell_size }, color);
             #if DEBUG {
-                draw_text(.{ board_offset.x + (x * board_cell_size) + 10, window_size.y - board_offset.y + (BOARD_SIZE - y * board_cell_size) - board_cell_size * 0.8 }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 });
-                draw_text(.{ board_offset.x + (x * board_cell_size) + board_cell_size * 0.7, window_size.y - board_offset.y + (BOARD_SIZE - y * board_cell_size) - board_cell_size * 0.8 }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.5 });
+                draw_text(.{ board_offset.x + (x * board_cell_size) + 10, board_offset.y + (y * board_cell_size) - (board_cell_size * 0.8) }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 });
+                draw_text(.{ board_offset.x + (x * board_cell_size) + (board_cell_size * 0.7), board_offset.y + (y * board_cell_size) - (board_cell_size * 0.8) }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.5 });
             }
         }
     }
