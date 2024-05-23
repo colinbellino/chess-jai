@@ -31,16 +31,16 @@ PIECE_TO_SYMBOL :: u8.[
     /* .Queen */  #char "Q",
 ];
 SYMBOL_TO_PIECE: Hash_Table.Table(s64, Piece_Type);
-// DIRECTION_TO_INDEX := [Direction]int {
-//     .North      = -BOARD_SIZE,
-//     .South      = +BOARD_SIZE,
-//     .East       = +1,
-//     .West       = -1,
-//     .North_East = -BOARD_SIZE + 1,
-//     .North_West = -BOARD_SIZE - 1,
-//     .South_West = +BOARD_SIZE - 1,
-//     .South_East = +BOARD_SIZE + 1,
-// }
+DIRECTION_TO_INDEX := int.[
+    /* .North */      -BOARD_SIZE,
+    /* .South */      +BOARD_SIZE,
+    /* .East */       +1,
+    /* .West */       -1,
+    /* .North_East */ -BOARD_SIZE + 1,
+    /* .North_West */ -BOARD_SIZE - 1,
+    /* .South_West */ +BOARD_SIZE - 1,
+    /* .South_East */ +BOARD_SIZE + 1,
+];
 TICK_PERIOD : float64 : 1.0 / 60.0;
 WANTED_MSAA :: 8;
 COLOR_WHITE :: Color.{ 1, 1, 1, 1 };
@@ -375,11 +375,11 @@ frame_update :: () {
                 // move = cpu_best_move(board, _mem.play.valid_moves);
             } else {
                 if mouse_button_is_pressed(.MOUSE_BUTTON_LEFT) {
+                    log("drag_start: %", mouse_board_index);
                     piece_start := board_index_to_piece(*game.board, mouse_board_index);
                     if piece_start != null && piece_start.type != .None && piece_start.color == game.board.active_color {
                         game.drag_in_progress = true;
                         game.drag_start = mouse_board_index;
-                        log("drag_start: %", mouse_board_index);
                     }
                 }
                 if mouse_button_is_released(.MOUSE_BUTTON_LEFT) {
@@ -403,7 +403,6 @@ frame_update :: () {
             }
 
             if move != null {
-                log("move: %", move.*);
                 array_add(*game.moves, move.*);
                 game.hide_move_piece = true;
 
@@ -501,8 +500,8 @@ frame_update :: () {
             }
             draw_rect(.{ board_offset.x + (x * board_cell_size), board_offset.y + (y * board_cell_size) }, .{ board_cell_size, board_cell_size }, color);
             #if DEBUG {
-                draw_text(.{ board_offset.x + (x * board_cell_size) + 10, board_offset.y + (y * board_cell_size) - (board_cell_size * 0.8) }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 });
-                draw_text(.{ board_offset.x + (x * board_cell_size) + (board_cell_size * 0.7), board_offset.y + (y * board_cell_size) - (board_cell_size * 0.8) }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.5 });
+                draw_text(.{ board_offset.x + (x * board_cell_size) + 10, board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 });
+                draw_text(.{ board_offset.x + (x * board_cell_size) + (board_cell_size * 0.7), board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.5 });
             }
         }
     }
@@ -843,7 +842,7 @@ generate_valid_moves :: (board: *Board) -> [..]Move {
             //     }
             // }
             case .Pawn; {
-                for push1: 1..1 {
+                for push1: 0..0 {
                     target_index, target_piece, target_found := board_position_to_index(board, start_position + Vector2s32.{ 0, color_direction_y });
                     if target_found == false {
                         break push1;
@@ -862,7 +861,7 @@ generate_valid_moves :: (board: *Board) -> [..]Move {
                     array_add(*valid_moves, move);
                 }
 
-                for push2: 1..1 {
+                for push2: 0..0 {
                     PAWN_START_Y :: 1;
                     is_rank_valid := start_position.y == (BOARD_SIZE - 1 - PAWN_START_Y) || start_position.y == PAWN_START_Y;
                     if is_rank_valid == false {
@@ -894,55 +893,55 @@ generate_valid_moves :: (board: *Board) -> [..]Move {
                     array_add(*valid_moves, move);
                 }
 
-                // capture: {
-                //     pawn_capture_moves := [?]Vector2s32 {
-                //         { +1, color_direction_y },
-                //         { -1, color_direction_y },
-                //     }
-                //     for move in pawn_capture_moves {
-                //         target_index, target_piece, target_found := board_position_to_index(board, start_position + move)
-                //         if target_found == false {
-                //             continue
-                //         }
-                //         if target_piece.type == .None || target_piece.color == board.active_color {
-                //             continue
-                //         }
+                for capture: 0..0 {
+                    pawn_capture_moves := Vector2s32.[
+                        .{ +1, color_direction_y },
+                        .{ -1, color_direction_y },
+                    ];
+                    for capture_move : pawn_capture_moves {
+                        target_index, target_piece, target_found := board_position_to_index(board, start_position + capture_move);
+                        if target_found == false {
+                            continue;
+                        }
+                        if target_piece.type == .None || target_piece.color == board.active_color {
+                            continue;
+                        }
 
-                //         move := Move {
-                //             start        = board_index,
-                //             start_piece  = piece,
-                //             target       = target_index,
-                //             target_piece = target_piece^,
-                //             flags        = { target_piece.type == .King ? .Check : .None }
-                //         }
-                //         append(&valid_moves, move)
-                //     }
-                // }
+                        move := Move.{
+                            start        = board_index,
+                            start_piece  = piece,
+                            target       = target_index,
+                            target_piece = target_piece.*,
+                            flags        = ifx(target_piece.type == .King) then .Check else .None,
+                        };
+                        array_add(*valid_moves, move);
+                    }
+                }
 
-                // en_passant: {
-                //     pawn_en_passant_moves := [?]Vector2s32 {
-                //         { +1, color_direction_y },
-                //         { -1, color_direction_y },
-                //     }
-                //     for move in pawn_en_passant_moves {
-                //         target_index, target_piece, target_found := board_position_to_index(board, start_position + move)
-                //         if target_found == false {
-                //             continue
-                //         }
-                //         if board.en_passant != target_index {
-                //             continue
-                //         }
+                for en_passant: 0..0 {
+                    pawn_en_passant_moves := Vector2s32.[
+                        .{ +1, color_direction_y },
+                        .{ -1, color_direction_y },
+                    ];
+                    for en_passant_move : pawn_en_passant_moves {
+                        target_index, target_piece, target_found := board_position_to_index(board, start_position + en_passant_move);
+                        if target_found == false {
+                            continue;
+                        }
+                        if board.en_passant != target_index {
+                            continue;
+                        }
 
-                //         move := Move {
-                //             start        = board_index,
-                //             start_piece  = piece,
-                //             target       = target_index,
-                //             target_piece = target_piece^,
-                //             flags        = { .En_Passant, target_piece.type == .King ? .Check : .None }
-                //         }
-                //         append(&valid_moves, move)
-                //     }
-                // }
+                        move := Move.{
+                            start        = board_index,
+                            start_piece  = piece,
+                            target       = target_index,
+                            target_piece = target_piece.*,
+                            flags        = ifx(target_piece.type == .King) then .Check | .En_Passant else .En_Passant,
+                        };
+                        array_add(*valid_moves, move);
+                    }
+                }
             }
             case .None; {}
         }
@@ -955,7 +954,7 @@ mouse_button_is_pressed :: (button: Input.Key_Code) -> bool {
     return Input.input_button_states[button] == .DOWN | .START;
 }
 mouse_button_is_released :: (button: Input.Key_Code) -> bool {
-    return Input.input_button_states[button] == .DOWN | .END;
+    return Input.input_button_states[button] == .END;
 }
 
 get_mouse_window_position :: () -> Vector2 {
@@ -971,33 +970,33 @@ board_make_move :: (board: *Board, move: Move) -> (captured_a_piece: bool) {
     piece_start := board_index_to_piece(board, move.start);
     piece_target := board_index_to_piece(board, move.target);
 
-    // {
-    //     captured_a_piece = piece_target.type != .None
-    //     en_passant_direction : Direction = board.active_color == .White ? .South : .North
-    //     board.en_passant = -1
+    {
+        captured_a_piece = piece_target.type != .None;
+        en_passant_direction : Direction = ifx(board.active_color == .White) then .South else .North;
+        board.en_passant = -1;
 
-    //     if .En_Passant in move.flags {
-    //         captured_piece := board_index_to_piece(board, move.target + DIRECTION_TO_INDEX[en_passant_direction])
-    //         captured_piece^ = {}
-    //         captured_a_piece = true
-    //     }
-    //     if .Push2 in move.flags {
-    //         board.en_passant = move.target + DIRECTION_TO_INDEX[en_passant_direction]
-    //     }
-    // }
+        if move.flags & .En_Passant {
+            captured_piece := board_index_to_piece(board, move.target + DIRECTION_TO_INDEX[en_passant_direction]);
+            captured_piece.* = .{};
+            captured_a_piece = true;
+        }
+        if move.flags & .Push2 {
+            board.en_passant = move.target + DIRECTION_TO_INDEX[en_passant_direction];
+        }
+    }
 
-    // if .Castle in move.flags {
-    //     start_position := e.grid_index_to_position(move.start, BOARD_SIZE)
-    //     target_position := e.grid_index_to_position(move.target, BOARD_SIZE)
-    //     king_direction : Direction = (target_position.x - start_position.x > 0) ? .East : .West
+    if move.flags & .Castle {
+        start_position := grid_index_to_position(move.start, BOARD_SIZE_V2);
+        target_position := grid_index_to_position(move.target, BOARD_SIZE_V2);
+        king_direction : Direction = ifx(target_position.x - start_position.x > 0) then .East else .West;
 
-    //     rook_start_offset := (king_direction == .East) ? +1 : -2
-    //     rook_start_piece := board_index_to_piece(board, move.target + rook_start_offset)
-    //     rook_target_offset := (king_direction == .East) ? -1 : +1
-    //     rook_target_piece := board_index_to_piece(board, move.target + rook_target_offset)
-    //     rook_target_piece^ = rook_start_piece^
-    //     rook_start_piece^ = {}
-    // }
+        rook_start_offset := ifx(king_direction == .East) then +1 else -2;
+        rook_start_piece := board_index_to_piece(board, move.target + rook_start_offset);
+        rook_target_offset := ifx(king_direction == .East) then -1 else +1;
+        rook_target_piece := board_index_to_piece(board, move.target + rook_target_offset);
+        rook_target_piece.* = rook_start_piece.*;
+        rook_start_piece.* = .{};
+    }
 
     piece_target.* = piece_start.*;
     piece_start.* = .{};
