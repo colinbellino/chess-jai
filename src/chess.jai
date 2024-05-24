@@ -3,6 +3,7 @@ Input      :: #import "Input";
 File       :: #import "File";
 Hash_Table :: #import "Hash_Table";
 GetRect    :: #import "GetRect_LeftHanded";
+#import "Sort";
 #import "Random";
 #import "Math";
 #import "stb_image_write";
@@ -13,7 +14,7 @@ GetRect    :: #import "GetRect_LeftHanded";
 
 FEN :: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-Z_INDEX_BASE :: 1;
+BASE_LAYER :: 100;
 MAX_HALFMOVES_WITHOUT_CAPTURE :: 100;
 BOARD_SIZE :: 8;
 BOARD_SIZE_V2 :: Vector2s32.{ BOARD_SIZE, BOARD_SIZE };
@@ -38,8 +39,8 @@ DIRECTION_TO_INDEX := int.[
     /* .West */       -1,
     /* .North_East */ -BOARD_SIZE + 1,
     /* .North_West */ -BOARD_SIZE - 1,
-    /* .South_West */ +BOARD_SIZE - 1,
     /* .South_East */ +BOARD_SIZE + 1,
+    /* .South_West */ +BOARD_SIZE - 1,
 ];
 TICK_PERIOD : float64 : 1.0 / 60.0;
 WANTED_MSAA :: 8;
@@ -153,6 +154,33 @@ operator + :: (a: Vector2s32, b: Vector2s32) -> Vector2s32 {
 operator - :: (a: Vector2s32, b: Vector2s32) -> Vector2s32 {
     return .{ a.x - b.x, a.y - b.y };
 }
+operator == :: inline (a: Vector2s32, b: Vector2s32) -> bool {
+    return (a.x == b.x) && (a.y == b.y);
+}
+
+UI_Item :: struct {
+    type:       enum { Rect; Text; Piece; };
+    layer:      int = 1;
+    union {
+        rect:   Draw_Rect;
+        text:   Draw_Text;
+        piece:  Draw_Piece;
+    }
+};
+Draw_Rect :: struct {
+    position:   Vector2;
+    size:       Vector2;
+    color:      Color;
+}
+Draw_Text :: struct {
+    position:   Vector2;
+    text:       string;
+    color:      Color = .{ 1, 1, 1, 1 };
+}
+Draw_Piece :: struct {
+    position:   Vector2;
+    piece:      Piece;
+}
 
 // Window
 window: Window_Type;
@@ -165,9 +193,12 @@ dt: float;
 texture_pieces: Simp.Texture;
 my_font: *Simp.Dynamic_Font;
 font_data := #run(load_file_or_exit("./assets/fonts/OpenSans-BoldItalic.ttf"));
+font_size: s32;
 image_data := #run(load_file_or_exit("./assets/art/pieces.png"));
 zoom := 48.0;
 button_theme: GetRect.Button_Theme;
+text_input_theme: GetRect.Text_Input_Theme;
+number_input_theme: GetRect.Number_Input_Theme;
 // Play_State
 mode: Play_Mode;
 // turn_arena: tools.Named_Virtual_Arena,
@@ -181,13 +212,14 @@ any_input_was_used: bool;
 mouse_window_position: Vector2;
 mouse_world_position: Vector2;
 mouse_board_position: Vector2s32;
+draw_calls: [..]UI_Item;
 
-// #run {
-//     #if OS == .WINDOWS {
-//         WR :: #import "Windows_Resources";
-//         WR.disable_runtime_console();
-//     }
-// }
+#run {
+    #if DEBUG == false && OS == .WINDOWS {
+        WR :: #import "Windows_Resources";
+        WR.disable_runtime_console();
+    }
+}
 
 main :: () {
     #if OS == .WINDOWS {
@@ -299,6 +331,12 @@ frame_begin :: () {
         button_theme = my_theme.button_theme;
         button_theme.font = my_font;
         button_theme.enable_variable_frame_thickness = true;
+
+        text_input_theme = my_theme.text_input_theme;
+        text_input_theme.font = my_font;
+
+        // number_input_theme = my_theme.button_theme;
+        // number_input_theme.font = my_font;
     }
 }
 
@@ -368,6 +406,14 @@ frame_update :: () {
                 move = cpu_best_move(*game.board, game.valid_moves);
                 assert(move != null, "Not best move found for CPU?!");
             } else {
+                #if DEBUG {
+                    if mouse_button_is_pressed(.MOUSE_BUTTON_RIGHT) {
+                        piece_start := board_index_to_piece(*game.board, mouse_board_index);
+                        if piece_start != null {
+                            piece_start.type = .None;
+                        }
+                    }
+                }
                 if mouse_button_is_pressed(.MOUSE_BUTTON_LEFT) {
                     piece_start := board_index_to_piece(*game.board, mouse_board_index);
                     if piece_start != null && piece_start.type != .None && piece_start.color == game.board.active_color {
@@ -445,15 +491,15 @@ frame_update :: () {
         case .Game_Over; {
             box_height :: 280.0;
             text_width :: 10.0;
-            draw_rect(.{ 0, (window_size.y / 2) - (box_height / 2) }, .{ cast(float) window_size.x, box_height }, .{ 0, 0, 0, 0.8 }, layer = 1);
-            draw_text(.{ 0, cast(float) (window_size.y / 2) - 60 }, "Checkmate", layer = 1);
+            push_rect(.{ 0, (window_size.y / 2) - (box_height / 2) }, .{ cast(float) window_size.x, box_height }, .{ 0, 0, 0, 0.8 }, layer = 10);
+            push_text(.{ 0, cast(float) (window_size.y / 2) - 60 }, "Checkmate", layer = 11);
             victor_text: string;
             if game.victor == {
                 case .White; { victor_text = "- Victory: white -"; }
                 case .Black; { victor_text = "- Victory: black -"; }
                 case .Draw;  { victor_text = "-      Draw      -"; }
             }
-            draw_text(.{ 0, cast(float) (window_size.y / 2) + 30 }, victor_text, layer = 1);
+            push_text(.{ 0, cast(float) (window_size.y / 2) + 30 }, victor_text, layer = 11);
 
             if any_input_was_used {
                 mode = .Init;
@@ -461,11 +507,8 @@ frame_update :: () {
         }
     }
 
-    Simp.set_shader_for_color();
-
-    time := seconds_since_init();
-
     #if DEBUG {
+        time := seconds_since_init();
         {
             theta := cast(float) fmod_cycling(time * 3, TAU);
             color: Vector4 = ---;
@@ -474,15 +517,17 @@ frame_update :: () {
             color.z = clamp(sin(theta) * -0.5 + 0.5, 0, 1);
             color.w = 1;
 
-            draw_text(.{ 50, cast(float) window_size.y - 75 }, tprint("zoom: % | mode: %", zoom, mode), color);
+            push_text(.{ 50, cast(float) window_size.y - 75 }, tprint("zoom: % | mode: %", zoom, mode), color);
         }
-        draw_text(.{ 10, 30 * 1 }, tprint("active_color: %", game.board.active_color));
-        draw_text(.{ 10, 30 * 2 }, tprint("mouse_board_position: %", mouse_board_position));
-        draw_text(.{ 10, 30 * 3 }, tprint("controllers: %", controllers));
+        push_text(.{ 10, font_size * 1.2 * 1 }, tprint("active_color: %", game.board.active_color));
+        push_text(.{ 10, font_size * 1.2 * 2 }, tprint("mouse_board_position: %", mouse_board_position));
+        push_text(.{ 10, font_size * 1.2 * 3 }, tprint("controllers: %", controllers));
 
-        if draw_button(.{ 10, 30 * 10 }, 2, "Trigger Game over") {
-            mode = .Game_Over;
-        }
+        if draw_button(.{ 10, font_size * 1.2 * 10 }, 2, "Trigger Game over") { mode = .Game_Over; }
+        if draw_button(.{ 10, font_size * 1.2 * 12 }, 2, tprint("White: %", controllers[Piece_Color.White])) { controllers[Piece_Color.White] = ifx(controllers[Piece_Color.White] == .Player) then .CPU else .Player; }
+        if draw_button(.{ 10, font_size * 1.2 * 14 }, 2, tprint("Black: %", controllers[Piece_Color.Black])) { controllers[Piece_Color.Black] = ifx(controllers[Piece_Color.Black] == .Player) then .CPU else .Player; }
+        GetRect.number_input(.{ 10, font_size * 1.2 * 16, font_size * 10.0, font_size * 2.0 }, tprint("%", seed), *seed, 0, 10000, *number_input_theme);
+        // GetRect.text_input(.{ 10, font_size * 1.2 * 16, 200, 50 }, "", *text_input_theme);
     }
 
     for y : 0 .. BOARD_SIZE-1 {
@@ -491,28 +536,38 @@ frame_update :: () {
             if (y + x) % 2 == 1 {
                 color = BOARD_COLOR_BLACK;
             }
-            draw_rect(.{ board_offset.x + (x * board_cell_size), board_offset.y + (y * board_cell_size) }, .{ board_cell_size, board_cell_size }, color);
+            push_rect(.{ board_offset.x + (x * board_cell_size), board_offset.y + (y * board_cell_size) }, .{ board_cell_size, board_cell_size }, color);
             #if DEBUG {
-                draw_text(.{ board_offset.x + (x * board_cell_size) + 10, board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 });
-                draw_text(.{ board_offset.x + (x * board_cell_size) + (board_cell_size * 0.7), board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.5 });
+                push_text(.{ board_offset.x + (x * board_cell_size) + (board_cell_size * 0.1), board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 }, 2);
+                push_text(.{ board_offset.x + (x * board_cell_size) + (board_cell_size * 0.8), board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.6 }, 2);
             }
         }
     }
 
     #if DEBUG {
         for y : 0 .. BOARD_SIZE-1 {
-            draw_text(board_offset + .{ -0.4,             xx y + 0.4 } * board_cell_size, tprint("%", digit_to_rune(xx(BOARD_SIZE - y))));
-            draw_text(board_offset + .{ BOARD_SIZE + 0.2, xx y + 0.4 } * board_cell_size, tprint("%", digit_to_rune(xx(BOARD_SIZE - y))));
+            push_text(board_offset + .{ -0.4,             xx y + 0.4 } * board_cell_size, tprint("%", digit_to_rune(xx(BOARD_SIZE - y))));
+            push_text(board_offset + .{ BOARD_SIZE + 0.2, xx y + 0.4 } * board_cell_size, tprint("%", digit_to_rune(xx(BOARD_SIZE - y))));
         }
         for x : 0 .. BOARD_SIZE-1 {
-            draw_text(board_offset + .{ xx(x) + 0.4,             -0.35 } * board_cell_size, tprint("%", digit_to_rank(xx(x))));
-            draw_text(board_offset + .{ xx(x) + 0.4, BOARD_SIZE + 0.15 } * board_cell_size, tprint("%", digit_to_rank(xx(x))));
+            push_text(board_offset + .{ xx(x) + 0.4,             -0.35 } * board_cell_size, tprint("%", digit_to_rank(xx(x))));
+            push_text(board_offset + .{ xx(x) + 0.4, BOARD_SIZE + 0.15 } * board_cell_size, tprint("%", digit_to_rank(xx(x))));
         }
     }
 
     for piece, board_index : game.board.pieces {
         board_position := grid_index_to_position(board_index, BOARD_SIZE_V2);
-        draw_piece(board_position, piece);
+        if game.drag_in_progress && game.drag_start == board_index {
+            continue;
+        }
+        if game.hide_move_piece {
+            last_move := game.moves[game.moves.count-1];
+            if (last_move.target == board_index || last_move.start == board_index) {
+                continue;
+            }
+        }
+
+        push_piece_grid_position(board_position, piece, 1);
     }
 
     highlighted_piece_index := -1;
@@ -521,37 +576,47 @@ frame_update :: () {
         highlighted_piece_index = game.drag_start;
     }
     if highlighted_piece_index != -1 {
-        draw_cell_highlight(highlighted_piece_index, .{ 0.9, 0.9, 0.01, 0.6 });
+        push_cell_highlight(highlighted_piece_index, .{ 0.9, 0.9, 0.01, 0.6 });
         for move : game.valid_moves {
             if move.start == highlighted_piece_index {
-                draw_cell_highlight(move.target, .{ 0.9, 0.3, 0.3, 0.6 });
+                push_cell_highlight(move.target, .{ 0.9, 0.3, 0.3, 0.6 });
                 if move.flags & .Check {
-                    draw_cell_highlight(move.target, .{ 1, 0, 0, 1 });
+                    push_cell_highlight(move.target, .{ 1, 0, 0, 1 });
                 }
             }
         }
     }
     #if DEBUG {
         if game.board.en_passant != -1 {
-            draw_cell_highlight(game.board.en_passant, .{ 0.01, 0.1, 0.9, 0.6 });
+            push_cell_highlight(game.board.en_passant, .{ 0.01, 0.1, 0.9, 0.6 });
         }
     }
     if game.drag_in_progress {
-        draw_piece_world_position(mouse_world_position + board_offset - (.{ board_cell_size, board_cell_size } / 2), board_index_to_piece(*game.board, game.drag_start).*);
+        push_piece_world_position(mouse_world_position + board_offset - (.{ board_cell_size, board_cell_size } / 2), board_index_to_piece(*game.board, game.drag_start).*, 2);
     }
     if game.board.check[game.board.active_color] {
-        draw_cell_highlight(king_index, .{ 0.9, 0.1, 0.1, 0.7 });
+        push_cell_highlight(king_index, .{ 0.9, 0.1, 0.1, 0.7 });
+    }
+
+    sorted_calls := quick_sort(draw_calls, x => x.layer);
+    for item : sorted_calls {
+        if #complete item.type == {
+            case .Rect;  { draw_rect(item.rect); }
+            case .Text;  { draw_text(item.text); }
+            case .Piece; { draw_piece(item.piece); }
+        }
     }
 }
 
 frame_end :: () {
+    array_reset(*draw_calls);
     Simp.swap_buffers(window);
     reset_temporary_storage();
 }
 
 init_fonts :: () {
-    pixel_height := 20;
-    my_font = Simp.get_font_at_size(xx font_data, pixel_height);
+    font_size = window_size.y / 42;
+    my_font = Simp.get_font_at_size(xx font_data, font_size);
     assert(my_font != null);
 }
 
@@ -570,21 +635,41 @@ hex_to_color :: (hex_value: s64) -> Color {
     return color;
 }
 
-draw_rect :: (position: Vector2, size: Vector2, color: Color, layer := 1) {
-    Simp.set_shader_for_color(enable_blend = true);
-    Simp.immediate_begin();
-    Simp.immediate_quad(position.x, position.y, position.x + size.x, position.y + size.y, color);
-    Simp.immediate_flush();
+push_text :: (position: Vector2, text: string, color: Color = .{ 1, 1, 1, 1 }, layer := 0) {
+    array_add(*draw_calls, .{ type = .Text, layer = BASE_LAYER + layer, text = .{ position, text, color } });
 }
-draw_cell_highlight :: (board_index: int, color: Color) {
+push_rect :: (position: Vector2, size: Vector2, color: Color, layer := 0) {
+    array_add(*draw_calls, .{ type = .Rect, layer = BASE_LAYER + layer, rect = .{ position, size, color } });
+}
+push_cell_highlight :: (board_index: int, color: Color, layer := 1) {
     board_position := grid_index_to_position(board_index, BOARD_SIZE_V2);
     position := Vector2.{
         board_offset.x + cast(float) board_position.x * board_cell_size,
         board_offset.y + cast(float) board_position.y * board_cell_size,
     };
-    draw_rect(position, .{ board_cell_size, board_cell_size }, color, Z_INDEX_BASE + 3);
+    push_rect(position, .{ board_cell_size, board_cell_size }, color, layer);
 }
-draw_piece_world_position :: (world_position: Vector2, piece: Piece) {
+push_piece_world_position :: (world_position: Vector2, piece: Piece, layer := 0) {
+    array_add(*draw_calls, .{ type = .Piece, layer = BASE_LAYER + layer, piece = .{ world_position, piece } });
+}
+push_piece_grid_position :: (grid_position: Vector2s32, piece: Piece, layer := 0) {
+    x := board_offset.x + board_cell_size * grid_position.x;
+    y := board_offset.y + board_cell_size * grid_position.y;
+    world_position := Vector2.{ x, y };
+    array_add(*draw_calls, .{ type = .Piece, layer = BASE_LAYER + layer, piece = .{ world_position, piece } });
+}
+
+draw_text :: (using draw_text: Draw_Text) {
+    text_width := Simp.prepare_text(my_font, text);
+    Simp.draw_prepared_text(my_font, xx position.x, xx position.y, color);
+}
+draw_rect :: (using draw_rect: Draw_Rect) {
+    Simp.set_shader_for_color(enable_blend = true);
+    Simp.immediate_begin();
+    Simp.immediate_quad(position.x, position.y, position.x + size.x, position.y + size.y, color);
+    Simp.immediate_flush();
+}
+draw_piece :: (using draw_piece: Draw_Piece) {
     tw := PIECE_TEXTURE_SIZE.x;
     th := PIECE_TEXTURE_SIZE.y;
     tx := cast(float) piece.type * tw;
@@ -594,10 +679,10 @@ draw_piece_world_position :: (world_position: Vector2, piece: Piece) {
     Simp.set_shader_for_images(*texture_pieces);
     Simp.immediate_begin();
     Simp.immediate_quad(
-        .{ world_position.x + 0,               world_position.y + 0 },
-        .{ world_position.x + board_cell_size, world_position.y + 0 },
-        .{ world_position.x + board_cell_size, world_position.y + board_cell_size },
-        .{ world_position.x + 0,               world_position.y + board_cell_size },
+        .{ position.x + 0,               position.y + 0 },
+        .{ position.x + board_cell_size, position.y + 0 },
+        .{ position.x + board_cell_size, position.y + board_cell_size },
+        .{ position.x + 0,               position.y + board_cell_size },
         .{ 1, 1, 1, 1 },
         .{ tx + 0,  ty + 0 },
         .{ tx + tw, ty + 0 },
@@ -606,19 +691,9 @@ draw_piece_world_position :: (world_position: Vector2, piece: Piece) {
     );
     Simp.immediate_flush();
 }
-draw_piece :: (grid_position: Vector2s32, piece: Piece) {
-    x := board_offset.x + board_cell_size * grid_position.x;
-    y := board_offset.y + board_cell_size * grid_position.y;
-    draw_piece_world_position(.{ x, y }, piece);
-}
-draw_text :: (position: Vector2, text: string, color: Color = .{ 1, 1, 1, 1 }, layer := 1) {
-    text_width := Simp.prepare_text(my_font, text);
-    Simp.draw_prepared_text(my_font, xx position.x, xx position.y, color);
-}
+
 draw_button :: (position: Vector2, size: u8, text: string, color := COLOR_WHITE, layer := 0, loc := #caller_location) -> (was_just_pressed: bool) {
-    // FIXME: use layer so we don't draw below the board
-    k := window_size.y * 0.05;
-    rect := GetRect.get_rect(position.x, position.y, 4*k, k);
+    rect := GetRect.get_rect(position.x, position.y, font_size * 10.0, font_size * 2.0);
     was_just_pressed, state, was_just_released := GetRect.button(rect, text, *button_theme, loc = loc);
     return was_just_released;
 }
@@ -789,19 +864,19 @@ generate_valid_moves :: (board: *Board) -> [..]Move {
             case .Rook; #through;
             case .Queen; {
                 directions := board.squares_to_edges[board_index];
-                for value, direction_raw : directions {
+                for range, direction_raw : directions {
                     direction := cast(Direction) direction_raw;
-                    move_range := value;
+                    move_range := range;
                     if piece.type == .Rook && (direction == .North_East || direction == .North_West || direction == .South_East || direction == .South_West) {
                         continue;
                     } else if piece.type == .Bishop && (direction == .North || direction == .South || direction == .West || direction == .East) {
                         continue;
                     } else if piece.type == .King {
-                        move_range = min(value, 1);
+                        move_range = min(range, 1);
                     }
 
                     for i : 1 .. move_range {
-                        target_index := board_index + DIRECTION_TO_INDEX[direction] * i;
+                        target_index := board_index + (DIRECTION_TO_INDEX[direction] * i);
                         target_piece := *board.pieces[target_index];
 
                         if target_piece.type != .None && target_piece.color == board.active_color {
