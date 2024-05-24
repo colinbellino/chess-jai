@@ -314,6 +314,9 @@ frame_update :: () {
         window_size.y / 2.0 - board_cell_size * 8 / 2,
     };
 
+    king_index: int;
+    game.board.check[game.board.active_color], king_index = is_in_check(*game.board,, allocator = temp);
+
     if #complete mode == {
         case .Init; {
             game.board = fen_to_board(FEN);
@@ -329,11 +332,11 @@ frame_update :: () {
             {
                 // free_all(_mem.play.turn_arena.allocator)
                 game.valid_moves = generate_valid_moves(*game.board/* ,, allocator = turn_allocator */); // FIXME: allocator
-                // #reverse for &move, i in _mem.play.valid_moves {
-                //     if move_leads_to_check(move) {
-                //         ordered_remove(&_mem.play.valid_moves, i)
-                //     }
-                // }
+                for < move, i : game.valid_moves {
+                    if move_leads_to_check(move) {
+                        array_unordered_remove_by_index(*game.valid_moves, i);
+                    }
+                }
             }
 
             if game.valid_moves.count == 0 {
@@ -403,7 +406,7 @@ frame_update :: () {
             }
         }
         case .Perform_Move; {
-
+            // FIXME:
         }
         case .End_Turn; {
             move := game.moves[game.moves.count - 1];
@@ -462,22 +465,24 @@ frame_update :: () {
 
     time := seconds_since_init();
 
-    {
-        theta := cast(float) fmod_cycling(time * 3, TAU);
-        color: Vector4 = ---;
-        color.x = clamp(cos(theta) * 0.5 + 0.5, 0, 1);
-        color.y = 1;
-        color.z = clamp(sin(theta) * -0.5 + 0.5, 0, 1);
-        color.w = 1;
+    #if DEBUG {
+        {
+            theta := cast(float) fmod_cycling(time * 3, TAU);
+            color: Vector4 = ---;
+            color.x = clamp(cos(theta) * 0.5 + 0.5, 0, 1);
+            color.y = 1;
+            color.z = clamp(sin(theta) * -0.5 + 0.5, 0, 1);
+            color.w = 1;
 
-        draw_text(.{ 50, cast(float) window_size.y - 75 }, tprint("zoom: % | mode: %", zoom, mode), color);
-    }
-    // draw_text(.{ 50, 10 }, tprint("mouse_window_position: % | mouse_world_position: % | mouse_board_position: %", mouse_window_position, mouse_world_position, mouse_board_position));
-    draw_text(.{ 10, 30 * 1 }, tprint("active_color: %", game.board.active_color));
-    draw_text(.{ 10, 30 * 2 }, tprint("mouse_board_position: %", mouse_board_position));
-    draw_text(.{ 10, 30 * 3 }, tprint("controllers: %", controllers));
-    if draw_button(.{ 10, 30 * 10 }, 2, "Game over") {
-        mode = .Game_Over;
+            draw_text(.{ 50, cast(float) window_size.y - 75 }, tprint("zoom: % | mode: %", zoom, mode), color);
+        }
+        draw_text(.{ 10, 30 * 1 }, tprint("active_color: %", game.board.active_color));
+        draw_text(.{ 10, 30 * 2 }, tprint("mouse_board_position: %", mouse_board_position));
+        draw_text(.{ 10, 30 * 3 }, tprint("controllers: %", controllers));
+
+        if draw_button(.{ 10, 30 * 10 }, 2, "Trigger Game over") {
+            mode = .Game_Over;
+        }
     }
 
     for y : 0 .. BOARD_SIZE-1 {
@@ -491,6 +496,17 @@ frame_update :: () {
                 draw_text(.{ board_offset.x + (x * board_cell_size) + 10, board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%,%", x, y), .{ 0, 0, 0, 0.5 });
                 draw_text(.{ board_offset.x + (x * board_cell_size) + (board_cell_size * 0.7), board_offset.y + (y * board_cell_size) + (board_cell_size * 0.2) }, tprint("%", grid_position_to_index(.{ xx x, xx y }, BOARD_SIZE)), .{ 0, 0, 0, 0.5 });
             }
+        }
+    }
+
+    #if DEBUG {
+        for y : 0 .. BOARD_SIZE-1 {
+            draw_text(board_offset + .{ -0.4,             xx y + 0.4 } * board_cell_size, tprint("%", digit_to_rune(xx(BOARD_SIZE - y))));
+            draw_text(board_offset + .{ BOARD_SIZE + 0.2, xx y + 0.4 } * board_cell_size, tprint("%", digit_to_rune(xx(BOARD_SIZE - y))));
+        }
+        for x : 0 .. BOARD_SIZE-1 {
+            draw_text(board_offset + .{ xx(x) + 0.4,             -0.35 } * board_cell_size, tprint("%", digit_to_rank(xx(x))));
+            draw_text(board_offset + .{ xx(x) + 0.4, BOARD_SIZE + 0.15 } * board_cell_size, tprint("%", digit_to_rank(xx(x))));
         }
     }
 
@@ -522,6 +538,9 @@ frame_update :: () {
     }
     if game.drag_in_progress {
         draw_piece_world_position(mouse_world_position + board_offset - (.{ board_cell_size, board_cell_size } / 2), board_index_to_piece(*game.board, game.drag_start).*);
+    }
+    if game.board.check[game.board.active_color] {
+        draw_cell_highlight(king_index, .{ 0.9, 0.1, 0.1, 0.7 });
     }
 }
 
@@ -598,7 +617,7 @@ draw_text :: (position: Vector2, text: string, color: Color = .{ 1, 1, 1, 1 }, l
 }
 draw_button :: (position: Vector2, size: u8, text: string, color := COLOR_WHITE, layer := 0, loc := #caller_location) -> (was_just_pressed: bool) {
     // FIXME: use layer so we don't draw below the board
-    k := window_size.y * 0.1;
+    k := window_size.y * 0.05;
     rect := GetRect.get_rect(position.x, position.y, 4*k, k);
     was_just_pressed, state, was_just_released := GetRect.button(rect, text, *button_theme, loc = loc);
     return was_just_released;
@@ -729,8 +748,14 @@ is_number :: (byte: u8) -> bool {
 rune_to_digit :: (byte: u8) -> u8 {
     return byte - #char "0";
 }
+digit_to_rune :: (digit: u8) -> string {
+    return .{1, *(digit + #char "0") };
+}
 rank_to_digit :: (value: u8) -> int {
     return (cast(int) value) - #char "a";
+}
+digit_to_rank :: (digit: u8) -> string {
+    return .{1, *(digit + #char "a") };
 }
 
 board_position_to_index :: (board: *Board, board_position: Vector2s32) -> (int, *Piece, bool) {
@@ -1110,4 +1135,30 @@ cpu_best_move :: (board: *Board, valid_moves: [..]Move) -> (best_move: *Move) {
     }
 
     return best_move;
+}
+
+is_in_check :: (board: *Board) -> (in_check: bool, king_board_index: int) {
+    temp_board := board.*;
+    temp_board.active_color = ifx(temp_board.active_color == .White) then .Black else .White;
+    opponent_valid_moves := generate_valid_moves(*temp_board);
+    for opponent_move : opponent_valid_moves {
+        if opponent_move.flags & .Check {
+            return true, opponent_move.target;
+        }
+    }
+    return false, -1;
+}
+move_leads_to_check :: (move: Move) -> bool {
+    temp_board : Board = game.board;
+    temp_board.active_color = ifx(temp_board.active_color == .White) then .Black else .White;
+    board_make_move(*temp_board, move);
+
+    opponent_valid_moves := generate_valid_moves(*temp_board,, allocator = temp);
+    for opponent_move : opponent_valid_moves {
+        if opponent_move.flags & .Check {
+            return true;
+        }
+    }
+
+    return false;
 }
