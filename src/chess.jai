@@ -515,8 +515,10 @@ frame_update :: () {
             }
         }
     }
-    if game.board.en_passant != -1 {
-        draw_cell_highlight(game.board.en_passant, .{ 0.01, 0.1, 0.9, 0.6 });
+    #if DEBUG {
+        if game.board.en_passant != -1 {
+            draw_cell_highlight(game.board.en_passant, .{ 0.01, 0.1, 0.9, 0.6 });
+        }
     }
     if game.drag_in_progress {
         draw_piece_world_position(mouse_world_position + board_offset - (.{ board_cell_size, board_cell_size } / 2), board_index_to_piece(*game.board, game.drag_start).*);
