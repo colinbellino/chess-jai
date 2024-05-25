@@ -1,5 +1,4 @@
 // FIXME: Bundle into an .app file (mac)
-// FIXME: Allocators & leaks
 
 Simp         :: #import "Simp";
 Input        :: #import "Input";
@@ -7,6 +6,7 @@ File         :: #import "File";
 Hash_Table   :: #import "Hash_Table";
 GetRect      :: #import "GetRect_LeftHanded";
 Sound_Player :: #import "Sound_Player";
+Default_Allocator :: #import "Default_Allocator";
 #import "Sort";
 #import "Random";
 #import "Math";
@@ -394,8 +394,7 @@ frame_update :: () {
             game.hide_move_piece = false;
 
             {
-                // free_all(_mem.play.turn_arena.allocator)
-                game.valid_moves = generate_valid_moves(*game.board/* ,, allocator = turn_allocator */); // FIXME: allocator
+                game.valid_moves = generate_valid_moves(*game.board);
                 for < move, i : game.valid_moves {
                     if move_leads_to_check(move) {
                         array_unordered_remove_by_index(*game.valid_moves, i);
@@ -487,7 +486,6 @@ frame_update :: () {
                 target_world_position := board_offset + Vector2.{ cast(float) target_board_position.x, cast(float) target_board_position.y } * board_cell_size;
                 game.move_world_position = start_world_position;
 
-                // FIXME: turn allocator
                 game.move_animation = Animation.{ active = true, t = 0 };
                 game.move_animation.frames[0] = .{ 0, start_world_position,  *game.move_world_position };
                 game.move_animation.frames[1] = .{ 1, target_world_position, *game.move_world_position };
@@ -536,6 +534,7 @@ frame_update :: () {
                 game.board.fullmove_count += 1;
             }
             game.board.active_color = ifx(game.board.active_color == .White) then .Black else .White;
+            array_reset_keeping_memory(*game.valid_moves);
             mode = .Start_Turn;
         }
         case .Game_Over; {
@@ -661,9 +660,10 @@ frame_update :: () {
 
 frame_end :: () {
     animation_update();
-    array_reset(*draw_calls);
+    array_reset_keeping_memory(*draw_calls);
     Simp.swap_buffers(window);
     reset_temporary_storage();
+    memory_visualizer_per_frame_update();
 }
 
 init_fonts :: () {
@@ -1236,7 +1236,7 @@ world_to_board_position :: (world_position: Vector2) -> Vector2s32 {
     };
 }
 
-cpu_best_move :: (board: *Board, valid_moves: [..]Move) -> (best_move: *Move) {
+cpu_best_move :: (board: *Board, valid_moves: []Move) -> (best_move: *Move) {
     if valid_moves.count < 1 {
         return null;
     }
@@ -1274,7 +1274,7 @@ cpu_best_move :: (board: *Board, valid_moves: [..]Move) -> (best_move: *Move) {
 is_in_check :: (board: *Board) -> (in_check: bool, king_board_index: int) {
     temp_board := board.*;
     temp_board.active_color = ifx(temp_board.active_color == .White) then .Black else .White;
-    opponent_valid_moves := generate_valid_moves(*temp_board);
+    opponent_valid_moves := generate_valid_moves(*temp_board,, allocator = temp);
     for opponent_move : opponent_valid_moves {
         if opponent_move.flags & .Check {
             return true, opponent_move.target;
