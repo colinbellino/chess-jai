@@ -12,6 +12,7 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
     set_build_options_dc(.{ do_output = false });
 
     args_main := get_build_options(1).compile_time_command_line;
+    // FIXME: the base metaprogram already has a -release flag, use this instead?
     arg_release := array_find(args_main, "-release");
     target := ifx arg_release then "RELEASE" else "DEBUG";
 
@@ -39,9 +40,6 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
     set_build_options(options, workspace);
     make_directory_if_it_does_not_exist(full_output_path, recursive = true);
 
-    // make_directory_if_it_does_not_exist(tprint("%/assets/fonts", full_output_path), recursive = true);
-    // copy_file("assets/fonts/OpenSans-BoldItalic.ttf", tprint("%/assets/fonts/OpenSans-BoldItalic.ttf", full_output_path));
-
     compiler_begin_intercept(workspace);
     add_build_file("src/chess.jai", workspace);
     generated_code := false;
@@ -52,8 +50,9 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
                 phase := cast(*Message_Phase) message;
                 if phase.phase == .TYPECHECKED_ALL_WE_CAN {
                     if !generated_code {
+                        // FIXME: remove this
                         add_build_string(tprint("DEBUG :: %;", arg_release == false), workspace);
-                        add_build_string("ANIMATION_ENABLE :: false;", workspace);
+                        add_build_string("ANIMATION_ENABLE :: true;", workspace);
                         generated_code = true;
                     }
                 }

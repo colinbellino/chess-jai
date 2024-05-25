@@ -1,3 +1,6 @@
+// FIXME: Bundle into an .app file (mac)
+// FIXME: Allocators & leaks
+
 Simp         :: #import "Simp";
 Input        :: #import "Input";
 File         :: #import "File";
@@ -125,7 +128,7 @@ Game_State :: struct {
     hide_move_piece:        bool;
     victor:                 Victor;
     moves:                  [..]Move;
-    // move_animation:         *e.Animation;
+    move_animation:         Animation;
     move_world_position:    Vector2;
     movelist_scroll:        int;
 }
@@ -137,6 +140,17 @@ Game_Mode :: enum {
     Perform_Move;
     End_Turn;
     Game_Over;
+}
+
+Animation_Frame :: struct {
+    timestamp: s32;
+    position:  Vector2;
+    target:    *Vector2;
+}
+Animation :: struct {
+    active: bool;
+    t:      float;
+    frames: [2]Animation_Frame;
 }
 
 Color :: Vector4;
@@ -460,7 +474,31 @@ frame_update :: () {
             }
         }
         case .Perform_Move; {
-            // FIXME:
+            move := game.moves[game.moves.count - 1];
+
+            if game.move_animation.active == false {
+                start_board_position := grid_index_to_position(move.start, BOARD_SIZE_V2);
+                start_world_position := board_offset + Vector2.{ cast(float) start_board_position.x, cast(float) start_board_position.y } * board_cell_size;
+                target_board_position := grid_index_to_position(move.target, BOARD_SIZE_V2);
+                target_world_position := board_offset + Vector2.{ cast(float) target_board_position.x, cast(float) target_board_position.y } * board_cell_size;
+                game.move_world_position = start_world_position;
+
+                // FIXME: turn allocator
+                game.move_animation = Animation.{ active = true, t = 0 };
+                game.move_animation.frames[0] = .{ 0, start_world_position,  *game.move_world_position };
+                game.move_animation.frames[1] = .{ 1, target_world_position, *game.move_world_position };
+            }
+
+            {
+                push_piece_world_position(game.move_world_position, game.board.pieces[move.start], 2);
+                push_cell_highlight(move.start, .{ 0.9, 0.9, 0.01, 0.6 });
+                push_cell_highlight(move.target, .{ 0.9, 0.9, 0.01, 0.6 });
+
+                if game.move_animation.t == 1 {
+                    game.move_animation.active = false;
+                    mode = .End_Turn;
+                }
+            }
         }
         case .End_Turn; {
             move := game.moves[game.moves.count - 1];
@@ -617,6 +655,7 @@ frame_update :: () {
 }
 
 frame_end :: () {
+    animation_update();
     array_reset(*draw_calls);
     Simp.swap_buffers(window);
     reset_temporary_storage();
@@ -1315,4 +1354,16 @@ load_audio_data :: (name_for_error_reporting: string, data: string) -> Sound_Pla
     }
 
     return result;
+}
+
+animation_update :: () {
+    for _ : 0..0 { // In a real project, we would have multiple animations, but here we keep it simple
+        animation := *game.move_animation;
+        if animation.active {
+            start := animation.frames[0].position;
+            end := animation.frames[1].position;
+            animation.frames[0].target.* = start + ((end - start) * animation.t);
+            animation.t = clamp(animation.t + delta_time, 0, 1);
+        }
+    }
 }
