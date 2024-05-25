@@ -1,4 +1,4 @@
-// FIXME: Bundle into an .app file (mac)
+// FIXME: App icon
 
 Simp         :: #import "Simp";
 Input        :: #import "Input";

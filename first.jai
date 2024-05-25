@@ -4,6 +4,7 @@
 #import "File";
 #import "File_Utilities";
 #import "String";
+MacOS_Bundler :: #import "MacOS_Bundler";
 
 OUTPUT_PATH            :: "dist";
 OUTPUT_EXECUTABLE_NAME :: "chess";
@@ -12,7 +13,6 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
     set_build_options_dc(.{ do_output = false });
 
     args_main := get_build_options(1).compile_time_command_line;
-    // FIXME: the base metaprogram already has a -release flag, use this instead?
     arg_release := array_find(args_main, "-release");
     target := ifx arg_release then "RELEASE" else "DEBUG";
 
@@ -62,6 +62,17 @@ OUTPUT_EXECUTABLE_NAME :: "chess";
         }
     }
     compiler_end_intercept(workspace);
+
+    if OS == .MACOS && arg_release {
+        MacOS_Bundler.create_app_bundle(
+            app_name = "Chess",
+            app_exe_path = tprint("%/%", full_output_path, OUTPUT_EXECUTABLE_NAME),
+            icon_file_path = "./assets/icons/icon_256x256.icns",
+            resource_directory_to_copy = "",
+            only_copy_subdirectories_and_files = true,
+            write_plist = true
+        );
+    }
 
     if arg_open {
         log("------------------------------");

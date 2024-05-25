@@ -9,4 +9,4 @@ fi
 
 echo "Deploying version $version (win) build to itch..."
 butler push ./dist/WINDOWS_X64_RELEASE/ colinbellino/chess:win --userversion=$version
-butler push ./dist/MACOS_X64_RELEASE/Chess.app colinbellino/chess:mac --userversion=$version
+butler push ./Chess.app colinbellino/chess:mac --userversion=$version
