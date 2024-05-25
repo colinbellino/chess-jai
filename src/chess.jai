@@ -1,8 +1,9 @@
-Simp       :: #import "Simp";
-Input      :: #import "Input";
-File       :: #import "File";
-Hash_Table :: #import "Hash_Table";
-GetRect    :: #import "GetRect_LeftHanded";
+Simp         :: #import "Simp";
+Input        :: #import "Input";
+File         :: #import "File";
+Hash_Table   :: #import "Hash_Table";
+GetRect      :: #import "GetRect_LeftHanded";
+Sound_Player :: #import "Sound_Player";
 #import "Sort";
 #import "Random";
 #import "Math";
@@ -12,8 +13,9 @@ GetRect    :: #import "GetRect_LeftHanded";
 #import "System";
 #import "String";
 
+#placeholder ANIMATION_ENABLE;
+#placeholder DEBUG;
 FEN :: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
 BASE_LAYER :: 100;
 MAX_HALFMOVES_WITHOUT_CAPTURE :: 100;
 BOARD_SIZE :: 8;
@@ -46,10 +48,7 @@ TICK_PERIOD : float64 : 1.0 / 60.0;
 WANTED_MSAA :: 8;
 COLOR_WHITE :: Color.{ 1, 1, 1, 1 };
 COLOR_BLACK :: Color.{ 0, 0, 0, 1 };
-#placeholder ANIMATION_ENABLE;
-#placeholder DEBUG;
 
-// Directions :: bit_set[Direction]
 Direction :: enum u8 {
     North;
     South;
@@ -69,7 +68,6 @@ Piece_Color :: enum u8 {
     White;
     Black;
 }
-// Piece_Types :: bit_set[Piece_Type]
 Piece_Type :: enum u8 {
     None   :: 0;
     King   :: 1;
@@ -104,7 +102,6 @@ Move :: struct {
     target_piece:   Piece;
     flags:          Move_Flag;
 }
-// Move_Flags :: bit_set[Move_Flag]
 Move_Flag :: enum u8 {
     None        :: 0;
     En_Passant  :: 1 << 0;
@@ -119,7 +116,7 @@ Victor :: enum {
     Draw;
 }
 
-Game :: struct {
+Game_State :: struct {
     board:                  Board;
     drag_in_progress:       bool;
     valid_moves:            [..]Move;
@@ -133,7 +130,7 @@ Game :: struct {
     movelist_scroll:        int;
 }
 
-Play_Mode :: enum {
+Game_Mode :: enum {
     Init;
     Start_Turn;
     Select_Move;
@@ -188,31 +185,34 @@ window_size := Vector2s32.{ 1920, 1080 };
 last_time: float64;
 now: float64;
 elapsed_time: float64;
-dt: float;
+delta_time: float;
 // Renderer
 texture_pieces: Simp.Texture;
-my_font: *Simp.Dynamic_Font;
-font_data := #run(load_file_or_exit("./assets/fonts/OpenSans-BoldItalic.ttf"));
-font_size: s32;
-image_data := #run(load_file_or_exit("./assets/art/pieces.png"));
+font_main: *Simp.Dynamic_Font;
+font_data_main := #run(load_file_or_exit("./assets/fonts/OpenSans-BoldItalic.ttf"));
+font_size_main: s32;
+image_data_pieces := #run(load_file_or_exit("./assets/art/pieces.png"));
 zoom := 48.0;
 button_theme: GetRect.Button_Theme;
 text_input_theme: GetRect.Text_Input_Theme;
 number_input_theme: GetRect.Number_Input_Theme;
-// Play_State
-mode: Play_Mode;
-// turn_arena: tools.Named_Virtual_Arena,
-// board_input: cstring,
-seed: u64;
-controllers: [#run(count_of(Piece_Color))]Controller;
+draw_calls: [..]UI_Item;
 board_cell_size: float;
 board_offset: Vector2;
-game: Game;
+// Audio
+sound_data_place_piece := #run(load_file_or_exit("./assets/sounds/chipLay1.wav"));
+sound_place_piece: Sound_Player.Sound_Data;
+sound_data_take_piece  := #run(load_file_or_exit("./assets/sounds/chipsHandle6.wav"));
+sound_take_piece: Sound_Player.Sound_Data;
+// Game
+mode: Game_Mode;
+game: Game_State;
+seed: u64;
+controllers: [#run(count_of(Piece_Color))]Controller;
 any_input_was_used: bool;
 mouse_window_position: Vector2;
 mouse_world_position: Vector2;
 mouse_board_position: Vector2s32;
-draw_calls: [..]UI_Item;
 
 #run {
     #if DEBUG == false && OS == .WINDOWS {
@@ -228,6 +228,18 @@ main :: () {
         Windows.timeBeginPeriod(1);
     }
 
+    window = create_window(window_size.x, window_size.y, "Chess", wanted_msaa = WANTED_MSAA);
+    msaa := Simp.prepare_window(window, wanted_msaa = WANTED_MSAA);
+    window_size.x, window_size.y = Simp.get_render_dimensions(window);
+
+    Simp.set_render_target(window, .LEFT_HANDED);
+
+    audio_success := Sound_Player.sound_player_init(.{ update_from_a_thread = true });
+    assert(audio_success);
+
+    sound_place_piece = load_audio_data("chipLay1", sound_data_place_piece);
+    sound_take_piece  = load_audio_data("chipsHandle6", sound_data_take_piece);
+
     Hash_Table.table_add(*SYMBOL_TO_PIECE, #char ".", .None);
     Hash_Table.table_add(*SYMBOL_TO_PIECE, #char "K", .King);
     Hash_Table.table_add(*SYMBOL_TO_PIECE, #char "P", .Pawn);
@@ -236,16 +248,10 @@ main :: () {
     Hash_Table.table_add(*SYMBOL_TO_PIECE, #char "R", .Rook);
     Hash_Table.table_add(*SYMBOL_TO_PIECE, #char "Q", .Queen);
 
-    window = create_window(window_size.x, window_size.y, "Chess", wanted_msaa = WANTED_MSAA);
-    msaa := Simp.prepare_window(window, wanted_msaa = WANTED_MSAA);
-    window_size.x, window_size.y = Simp.get_render_dimensions(window);
-
-    Simp.set_render_target(window, .LEFT_HANDED);
-
     GetRect.ui_init();
 
     init_fonts();
-    success := Simp.texture_load_from_memory(*texture_pieces, xx image_data);
+    success := Simp.texture_load_from_memory(*texture_pieces, xx image_data_pieces);
     assert(success);
 
     quit := false;
@@ -310,13 +316,15 @@ frame_begin :: () {
 
         now = seconds_since_init();
         if last_time{
-            dt = cast(float) (now - last_time);
+            delta_time = cast(float) (now - last_time);
         }
         last_time = now;
 
-        elapsed_time += dt;
+        elapsed_time += delta_time;
         sleep_milliseconds(2);
     }
+
+    Sound_Player.update();
 
     Simp.clear_render_target(BOARD_COLOR_BLACK.x - 0.25, BOARD_COLOR_BLACK.y - 0.25, BOARD_COLOR_BLACK.z - 0.25, BOARD_COLOR_BLACK.w);
 
@@ -325,18 +333,18 @@ frame_begin :: () {
 
         proc := GetRect.default_theme_procs[GetRect.Default_Themes.Freddie_Freeloader];
         my_theme := proc();
-        my_theme.font = my_font;
+        my_theme.font = font_main;
         GetRect.set_default_theme(my_theme);
 
         button_theme = my_theme.button_theme;
-        button_theme.font = my_font;
+        button_theme.font = font_main;
         button_theme.enable_variable_frame_thickness = true;
 
         text_input_theme = my_theme.text_input_theme;
-        text_input_theme.font = my_font;
+        text_input_theme.font = font_main;
 
         // number_input_theme = my_theme.button_theme;
-        // number_input_theme.font = my_font;
+        // number_input_theme.font = font_main;
     }
 }
 
@@ -476,10 +484,10 @@ frame_update :: () {
             captured_a_piece := board_make_move(*game.board, move);
             if captured_a_piece {
                 game.board.halfmoves_without_capture = 0;
-                // e.audio_play_sound(_mem.asset_sound_take_piece); // FIXME:
+                play_sound(*sound_take_piece);
             } else {
                 game.board.halfmoves_without_capture += 1;
-                // e.audio_play_sound(_mem.asset_sound_place_piece); // FIXME:
+                play_sound(*sound_place_piece);
             }
 
             if game.board.active_color == .Black {
@@ -519,15 +527,15 @@ frame_update :: () {
 
             push_text(.{ 50, cast(float) window_size.y - 75 }, tprint("zoom: % | mode: %", zoom, mode), color);
         }
-        push_text(.{ 10, font_size * 1.2 * 1 }, tprint("active_color: %", game.board.active_color));
-        push_text(.{ 10, font_size * 1.2 * 2 }, tprint("mouse_board_position: %", mouse_board_position));
-        push_text(.{ 10, font_size * 1.2 * 3 }, tprint("controllers: %", controllers));
+        push_text(.{ 10, font_size_main * 1.2 * 1 }, tprint("active_color: %", game.board.active_color));
+        push_text(.{ 10, font_size_main * 1.2 * 2 }, tprint("mouse_board_position: %", mouse_board_position));
+        push_text(.{ 10, font_size_main * 1.2 * 3 }, tprint("controllers: %", controllers));
 
-        if draw_button(.{ 10, font_size * 1.2 * 10 }, 2, "Trigger Game over") { mode = .Game_Over; }
-        if draw_button(.{ 10, font_size * 1.2 * 12 }, 2, tprint("White: %", controllers[Piece_Color.White])) { controllers[Piece_Color.White] = ifx(controllers[Piece_Color.White] == .Player) then .CPU else .Player; }
-        if draw_button(.{ 10, font_size * 1.2 * 14 }, 2, tprint("Black: %", controllers[Piece_Color.Black])) { controllers[Piece_Color.Black] = ifx(controllers[Piece_Color.Black] == .Player) then .CPU else .Player; }
-        GetRect.number_input(.{ 10, font_size * 1.2 * 16, font_size * 10.0, font_size * 2.0 }, tprint("%", seed), *seed, 0, 10000, *number_input_theme);
-        // GetRect.text_input(.{ 10, font_size * 1.2 * 16, 200, 50 }, "", *text_input_theme);
+        if draw_button(.{ 10, font_size_main * 1.2 * 10 }, 2, "Trigger Game over") { mode = .Game_Over; }
+        if draw_button(.{ 10, font_size_main * 1.2 * 12 }, 2, tprint("White: %", controllers[Piece_Color.White])) { controllers[Piece_Color.White] = ifx(controllers[Piece_Color.White] == .Player) then .CPU else .Player; }
+        if draw_button(.{ 10, font_size_main * 1.2 * 14 }, 2, tprint("Black: %", controllers[Piece_Color.Black])) { controllers[Piece_Color.Black] = ifx(controllers[Piece_Color.Black] == .Player) then .CPU else .Player; }
+        GetRect.number_input(.{ 10, font_size_main * 1.2 * 16, font_size_main * 10.0, font_size_main * 2.0 }, tprint("%", seed), *seed, 0, 10000, *number_input_theme);
+        // GetRect.text_input(.{ 10, font_size_main * 1.2 * 16, 200, 50 }, "", *text_input_theme);
     }
 
     for y : 0 .. BOARD_SIZE-1 {
@@ -615,9 +623,9 @@ frame_end :: () {
 }
 
 init_fonts :: () {
-    font_size = window_size.y / 42;
-    my_font = Simp.get_font_at_size(xx font_data, font_size);
-    assert(my_font != null);
+    font_size_main = window_size.y / 42;
+    font_main = Simp.get_font_at_size(xx font_data_main, font_size_main);
+    assert(font_main != null);
 }
 
 load_file_or_exit :: (name: string) -> string {
@@ -660,8 +668,8 @@ push_piece_grid_position :: (grid_position: Vector2s32, piece: Piece, layer := 0
 }
 
 draw_text :: (using draw_text: Draw_Text) {
-    text_width := Simp.prepare_text(my_font, text);
-    Simp.draw_prepared_text(my_font, xx position.x, xx position.y, color);
+    text_width := Simp.prepare_text(font_main, text);
+    Simp.draw_prepared_text(font_main, xx position.x, xx position.y, color);
 }
 draw_rect :: (using draw_rect: Draw_Rect) {
     Simp.set_shader_for_color(enable_blend = true);
@@ -693,7 +701,7 @@ draw_piece :: (using draw_piece: Draw_Piece) {
 }
 
 draw_button :: (position: Vector2, size: u8, text: string, color := COLOR_WHITE, layer := 0, loc := #caller_location) -> (was_just_pressed: bool) {
-    rect := GetRect.get_rect(position.x, position.y, font_size * 10.0, font_size * 2.0);
+    rect := GetRect.get_rect(position.x, position.y, font_size_main * 10.0, font_size_main * 2.0);
     was_just_pressed, state, was_just_released := GetRect.button(rect, text, *button_theme, loc = loc);
     return was_just_released;
 }
@@ -1236,4 +1244,75 @@ move_leads_to_check :: (move: Move) -> bool {
     }
 
     return false;
+}
+
+play_sound :: (data: *Sound_Player.Sound_Data, perturb: bool = true, category := Sound_Player.Sound_Category.GENERAL_SFX) -> *Sound_Player.Sound_Stream {
+    stream := Sound_Player.make_stream(data, category);
+
+    if perturb {
+        stream.user_volume_scale = random_get_within_range(0.5,  1);
+        stream.rate_scale        = random_get_within_range(0.75, 1.22);
+    }
+
+    Sound_Player.start_playing(stream);
+    return stream;
+}
+
+// This is a patched version of modules/Sound_Player/load.jai.
+// The original is missing the `#import "Wav_File";`, making it impossible to use `load_audio_data` directly (ie: without `load_audio_file`).
+load_audio_data :: (name_for_error_reporting: string, data: string) -> Sound_Player.Sound_Data {
+    #import "Wav_File";
+    using Sound_Player :: #import "Sound_Player";
+    result: Sound_Data;
+
+    name := name_for_error_reporting;
+
+    if data.count < 12 {
+        log_error("Unable to parse '%' as wav or ogg.\n", name);
+        return .{};
+    }
+
+    magic0 := get_magic4(data, 0);
+    if magic0 == 0x46464952 {
+        result.name = copy_string(name);
+        result.buffer = data;
+
+        format, samples, success2, extra := get_wav_header(result.buffer);
+        if !success2 {
+            log_error("Unable to parse '%' as wav.\n", name);
+            return result;
+        }
+
+        if format.wFormatTag == WAVE_FORMAT_PCM {
+            result.type                     = .LINEAR_SAMPLE_ARRAY;
+            result.nchannels                = cast(u16) format.nChannels;
+            result.nsamples_times_nchannels = samples.count/2;
+        } else if format.wFormatTag == WAVE_FORMAT_DVI_ADPCM {
+            result.type             = .ADPCM_COMPRESSED;
+            result.wSamplesPerBlock = extra.wSamplesPerBlock;
+            result.nBlockAlign      = format.nBlockAlign;
+
+            result.nchannels = cast(u16) format.nChannels;
+            // The value in the FACT chunk is number of samples by time.
+            result.nsamples_times_nchannels = extra.wSamplesAccordingToFactChunk * result.nchannels;
+        } else {
+            assert(false);
+        }
+
+        result.samples       = cast(*s16) samples.data;
+        result.sampling_rate = cast(u32) format.nSamplesPerSec;
+
+        result.loaded = true;
+    } else if magic0 == 0x5367674f {
+        result.name   = copy_string(name);
+        result.buffer = data;
+        result.type   = .OGG_COMPRESSED;
+
+        result.loaded = true;
+    } else {
+        // Unsupported format.
+        log_error("Unknown or unsupported format in %\n", name);
+    }
+
+    return result;
 }
