@@ -187,6 +187,8 @@ Draw_Text :: struct {
     position:   Vector2;
     text:       string;
     color:      Color = .{ 1, 1, 1, 1 };
+    alignment:  GetRect.Text_Alignment;
+    font:       *Simp.Dynamic_Font;
 }
 Draw_Piece :: struct {
     position:   Vector2;
@@ -205,6 +207,8 @@ texture_pieces: Simp.Texture;
 font_main: *Simp.Dynamic_Font;
 font_data_main := #run(load_file_or_exit("./assets/fonts/OpenSans-BoldItalic.ttf"));
 font_size_main: s32;
+font_title: *Simp.Dynamic_Font;
+font_size_title: s32;
 image_data_pieces := #run(load_file_or_exit("./assets/art/pieces.png"));
 zoom := 48.0;
 button_theme: GetRect.Button_Theme;
@@ -223,7 +227,7 @@ mode: Game_Mode;
 game: Game_State;
 seed: u64;
 controllers: [#run(count_of(Piece_Color))]Controller;
-any_input_was_used: bool;
+continue_was_pressed: bool;
 mouse_window_position: Vector2;
 mouse_world_position: Vector2;
 mouse_board_position: Vector2s32;
@@ -271,12 +275,13 @@ main :: () {
     quit := false;
     while !quit {
         Input.update_window_events();
-        any_input_was_used = false;
+        continue_was_pressed = false;
 
         for record : Input.get_window_resizes() {
             Simp.update_window(record.window);
 
             if record.window == window {
+                should_reinit := (record.width != window_size.x) || (record.height != window_size.y);
                 window_size.x  = record.width;
                 window_size.y = record.height;
 
@@ -286,7 +291,6 @@ main :: () {
                     zoom = window_size.x / 24.0;
                 }
 
-                should_reinit := (record.width != window_size.x) || (record.height != window_size.y);
                 if should_reinit {
                     init_fonts();
                 }
@@ -301,8 +305,8 @@ main :: () {
                     quit = true;
                 }
                 case .KEYBOARD; {
-                    if event.key_pressed == 0 {
-                        any_input_was_used = true;
+                    if event.key_pressed == 0 && (event.key_code == .SPACEBAR || event.key_code == .ENTER) {
+                        continue_was_pressed = true;
                     }
 
                     if event.key_pressed && event.key_code == .ESCAPE {
@@ -535,19 +539,20 @@ frame_update :: () {
             mode = .Start_Turn;
         }
         case .Game_Over; {
+            scale := window_size.y / 1080.0;
             box_height :: 280.0;
             text_width :: 10.0;
-            push_rect(.{ 0, (window_size.y / 2) - (box_height / 2) }, .{ cast(float) window_size.x, box_height }, .{ 0, 0, 0, 0.8 }, layer = 10);
-            push_text(.{ 0, cast(float) (window_size.y / 2) - 60 }, "Checkmate", layer = 11);
+            push_rect(.{ 0, (window_size.y / 2) - (box_height * scale / 2) }, .{ cast(float) window_size.x, box_height * scale }, .{ 0, 0, 0, 0.8 }, layer = 10);
+            push_text(.{ cast(float) (window_size.x / 2), cast(float) (window_size.y / 2) - 25 * scale }, "Checkmate", layer = 11, .Center, font = font_title);
             victor_text: string;
             if game.victor == {
                 case .White; { victor_text = "- Victory: white -"; }
                 case .Black; { victor_text = "- Victory: black -"; }
                 case .Draw;  { victor_text = "-      Draw      -"; }
             }
-            push_text(.{ 0, cast(float) (window_size.y / 2) + 30 }, victor_text, layer = 11);
+            push_text(.{ cast(float) (window_size.x / 2), cast(float) (window_size.y / 2) + 65 * scale }, victor_text, layer = 11, .Center, font = font_title);
 
-            if any_input_was_used {
+            if continue_was_pressed {
                 mode = .Init;
             }
         }
@@ -665,6 +670,10 @@ init_fonts :: () {
     font_size_main = window_size.y / 42;
     font_main = Simp.get_font_at_size(xx font_data_main, font_size_main);
     assert(font_main != null);
+
+    font_size_title = window_size.y / 16;
+    font_title = Simp.get_font_at_size(xx font_data_main, font_size_title);
+    assert(font_title != null);
 }
 
 load_file_or_exit :: (name: string) -> string {
@@ -682,8 +691,8 @@ hex_to_color :: (hex_value: s64) -> Color {
     return color;
 }
 
-push_text :: (position: Vector2, text: string, color: Color = .{ 1, 1, 1, 1 }, layer := 0) {
-    array_add(*draw_calls, .{ type = .Text, layer = BASE_LAYER + layer, text = .{ position, text, color } });
+push_text :: (position: Vector2, text: string, color: Color = .{ 1, 1, 1, 1 }, layer := 0, alignment := GetRect.Text_Alignment.Left, font: *Simp.Dynamic_Font = null) {
+    array_add(*draw_calls, .{ type = .Text, layer = BASE_LAYER + layer, text = .{ position, text, color, alignment, ifx(font == null) then font_main else font } });
 }
 push_rect :: (position: Vector2, size: Vector2, color: Color, layer := 0) {
     array_add(*draw_calls, .{ type = .Rect, layer = BASE_LAYER + layer, rect = .{ position, size, color } });
@@ -707,8 +716,11 @@ push_piece_grid_position :: (grid_position: Vector2s32, piece: Piece, layer := 0
 }
 
 draw_text :: (using draw_text: Draw_Text) {
-    text_width := Simp.prepare_text(font_main, text);
-    Simp.draw_prepared_text(font_main, xx position.x, xx position.y, color);
+    text_width := Simp.prepare_text(draw_text.font, text);
+    if draw_text.alignment == {
+        case .Center; { Simp.draw_prepared_text(draw_text.font, xx position.x - text_width / 2, xx position.y, color); }
+        case .Left;   { Simp.draw_prepared_text(draw_text.font, xx position.x, xx position.y, color); }
+    }
 }
 draw_rect :: (using draw_rect: Draw_Rect) {
     Simp.set_shader_for_color(enable_blend = true);
