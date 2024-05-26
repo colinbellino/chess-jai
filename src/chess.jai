@@ -1,5 +1,3 @@
-// FIXME: App icon
-
 Simp         :: #import "Simp";
 Input        :: #import "Input";
 File         :: #import "File";
@@ -143,7 +141,7 @@ Game_Mode :: enum {
 }
 
 Animation_Frame :: struct {
-    timestamp: s32;
+    timestamp: float;
     position:  Vector2;
     target:    *Vector2;
 }
@@ -487,8 +485,8 @@ frame_update :: () {
                 game.move_world_position = start_world_position;
 
                 game.move_animation = Animation.{ active = true, t = 0 };
-                game.move_animation.frames[0] = .{ 0, start_world_position,  *game.move_world_position };
-                game.move_animation.frames[1] = .{ 1, target_world_position, *game.move_world_position };
+                game.move_animation.frames[0] = .{ 0.0,   start_world_position,  *game.move_world_position };
+                game.move_animation.frames[1] = .{ 0.5, target_world_position, *game.move_world_position };
             }
 
             {
@@ -558,20 +556,11 @@ frame_update :: () {
     }
 
     #if DEBUG {
-        time := seconds_since_init();
-        {
-            theta := cast(float) fmod_cycling(time * 3, TAU);
-            color: Vector4 = ---;
-            color.x = clamp(cos(theta) * 0.5 + 0.5, 0, 1);
-            color.y = 1;
-            color.z = clamp(sin(theta) * -0.5 + 0.5, 0, 1);
-            color.w = 1;
-
-            push_text(.{ 50, cast(float) window_size.y - 75 }, tprint("zoom: % | mode: %", zoom, mode), color);
-        }
-        push_text(.{ 10, font_size_main * 1.2 * 1 }, tprint("active_color: %", game.board.active_color));
-        push_text(.{ 10, font_size_main * 1.2 * 2 }, tprint("mouse_board_position: %", mouse_board_position));
-        push_text(.{ 10, font_size_main * 1.2 * 3 }, tprint("controllers: %", controllers));
+        push_text(.{ 10, font_size_main * 1.2 * 1 }, tprint("zoom: % | mode: %", zoom, mode));
+        push_text(.{ 10, font_size_main * 1.2 * 2 }, tprint("DEBUG: % | ANIMATION_ENABLE: %", DEBUG, ANIMATION_ENABLE));
+        push_text(.{ 10, font_size_main * 1.2 * 3 }, tprint("active_color: %", game.board.active_color));
+        push_text(.{ 10, font_size_main * 1.2 * 4 }, tprint("mouse_board_position: %", mouse_board_position));
+        push_text(.{ 10, font_size_main * 1.2 * 5 }, tprint("controllers: %", controllers));
 
         if draw_button(.{ 10, font_size_main * 1.2 * 10 }, 2, "Trigger Game over") { mode = .Game_Over; }
         if draw_button(.{ 10, font_size_main * 1.2 * 12 }, 2, tprint("White: %", controllers[Piece_Color.White])) { controllers[Piece_Color.White] = ifx(controllers[Piece_Color.White] == .Player) then .CPU else .Player; }
@@ -1149,7 +1138,7 @@ mouse_button_is_pressed :: (button: Input.Key_Code) -> bool {
     return Input.input_button_states[button] == .DOWN | .START;
 }
 mouse_button_is_released :: (button: Input.Key_Code) -> bool {
-    return Input.input_button_states[button] == .END;
+    return (Input.input_button_states[button] & .END) != 0;
 }
 
 get_mouse_window_position :: () -> Vector2 {
@@ -1372,10 +1361,12 @@ animation_update :: () {
     for _ : 0..0 { // In a real project, we would have multiple animations, but here we keep it simple
         animation := *game.move_animation;
         if animation.active {
+            duration := cast(float) animation.frames[1].timestamp;
             start := animation.frames[0].position;
             end := animation.frames[1].position;
             animation.frames[0].target.* = start + ((end - start) * animation.t);
-            animation.t = clamp(animation.t + delta_time, 0, 1);
+            animation.t = clamp(animation.t + delta_time * duration * 100, 0, 1);
+            // log("duration: % (in s) | dt: % | %", duration, delta_time, animation.t);
         }
     }
 }
